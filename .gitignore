@@ -1,0 +1,23 @@
+# 本地环境与 IDE
+.env
+.cursor/
+
+# 本地运行配置（含 API Key，仅保留 config.env.example）
+script/config.env
+
+# 分析产物：保留 output/ 空壳，忽略实际产出
+output/*
+!output/.gitkeep
+
+# 被测对象、构建工具链等大体积本地内容
+object1_kernel_drivers_ub/
+object2_falconfs/
+object3_ubs_engine/
+build_common/
+infer-linux-x86_64-v1.2.0/
+infer-linux-x86_64-v1.2.0.tar.xz
+
+# 根目录其他文档（本仓库仅保留 SVFmemplus分析管线.md）
+README.md
+README.bc.md
+三对象静态分析检测结果统计.md

@@ -1,0 +1,33 @@
+FROM ubuntu:24.04
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+ENV llvm_version=21.1.0
+ENV lib_deps="cmake g++ gcc git zlib1g-dev libncurses5-dev libtinfo6 build-essential libssl-dev libpcre2-dev zip libzstd-dev"
+ENV build_deps="wget xz-utils git tcl software-properties-common"
+RUN set -e
+
+RUN apt-get update --fix-missing
+
+RUN apt-get install -y $build_deps $lib_deps universal-ctags
+
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+        python3.12-dev \
+        python3.12-venv \
+        python3-pip && \
+    update-alternatives --install /usr/bin/python3 python3 /usr/bin/python3.12 1 && \
+    rm -rf /var/lib/apt/lists/*
+
+RUN python3 -m venv /opt/venv && \
+    /opt/venv/bin/pip install --upgrade pip setuptools wheel && \
+    /opt/venv/bin/pip install openai google-genai && \
+    /opt/venv/bin/pip install tree_sitter tree_sitter_languages tree_sitter_c pytest && \
+    rm -rf /var/lib/apt/lists/*
+
+
+ENV PATH="/opt/venv/bin:$PATH"
+
+WORKDIR /src
+
+CMD ["/bin/bash"]

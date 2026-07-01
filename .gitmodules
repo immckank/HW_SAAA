@@ -1,0 +1,6 @@
+[submodule "FPhandler"]
+	path = FPhandler
+	url = git@github.com:immckank/FPhandler.git
+[submodule "SVFmemplus"]
+	path = SVFmemplus
+	url = git@github.com:immckank/SVFmemplus.git
