@@ -264,7 +264,7 @@ discover alerts/ → 加载 JSON → 跳过已有 classification 的条目
     → 原子写回 classification + reason 到原 JSON
 ```
 
-**批处理策略**（`ALERT_BATCH_SIZE=5`，可在 `script/config.py` 调整）：
+**批处理策略**（`ALERT_BATCH_SIZE=8`，可在 `script/config.py` 调整）：
 
 | category | 分批键 |
 |----------|--------|
@@ -272,8 +272,9 @@ discover alerts/ → 加载 JSON → 跳过已有 classification 的条目
 | `UNINIT_USE` | 同一 `evidence.memory_object.type`（或 descriptor） |
 | 其他 | 每条独立 |
 
-- 单条：Agent 调用 `set_conclusion`
-- 多条：Agent 必须一次性调用 `set_batch_conclusions`，且 `alert_id` 集合与批次完全一致，否则整批拒绝写回
+- 单条和多条统一调用 `set_conclusion`
+- 每次调用必须传入 1–N 个批内短 ID；同一次调用中的警报共享分类和理由
+- 不同分类可分多次调用；只有批内所有 ID 均已分类后才结束循环并写回
 
 **Agent 可用工具**（通过 `graph-reader` / 源码树）：
 
@@ -300,7 +301,7 @@ $out/fphandler/          # RES_ROOT_PATH（分析 trace 日志）
 $out/semantic_rules.json  # LLM 提出的语义规则候选（semantic-rules/v1，逐条追加）
 ```
 
-LLM 在 `set_conclusion` / `set_batch_conclusions` 中返回的 `semantic_candidates` 会自动追加到 `$out/semantic_rules.json`（`status: proposed`）。人工审核后可导出 approved 规则供 Saber 加载：
+LLM 在 `set_conclusion` 中返回的 `semantic_candidates` 会自动追加到 `$out/semantic_rules.json`（`status: proposed`）。人工审核后可导出 approved 规则供 Saber 加载：
 
 ```bash
 python3 FPhandler/semantic_rules.py $out/semantic_rules.json \

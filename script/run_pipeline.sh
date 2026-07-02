@@ -9,9 +9,12 @@
 
 set -euo pipefail
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PIPELINE_SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SCRIPT_DIR="$PIPELINE_SCRIPT_DIR"
 # shellcheck disable=SC1091
 source "$SCRIPT_DIR/lib/common.sh"
+# shellcheck disable=SC1091
+source "$SCRIPT_DIR/lib/svf_env.sh"
 
 RUN_SVF=1
 RUN_FPH=1
@@ -48,6 +51,13 @@ if [[ "$RUN_SVF" -eq 1 ]]; then
 fi
 
 if [[ "$RUN_FPH" -eq 1 ]]; then
+  fph_stats_only=0
+  for arg in "${FPH_ARGS[@]}"; do
+    [[ "$arg" == "--stats-only" ]] && fph_stats_only=1
+  done
+  if [[ "$fph_stats_only" -eq 0 ]]; then
+    ensure_svf_env "$svf_root"
+  fi
   cd "$fph_root"
-  python3 run.py --config "$SCRIPT_DIR/config.py" "${FPH_ARGS[@]}"
+  python3 run.py --config "$PIPELINE_SCRIPT_DIR/config.py" "${FPH_ARGS[@]}"
 fi
