@@ -4,7 +4,7 @@
 
 管线分为两步：**Step1 静态分析**（SVFmemplus）产出单警报 JSON；**Step2 LLM 分拣**（FPhandler）读取同一 JSON、调用 Agent 研判，并把结论写回原文件。
 
-当前 Saber 四类（leak / dfree / uaf / uninit）已完成统一报告格式改造；BOF 仍沿用旧产出，尚未接入 FPhandler。
+Saber 四类（leak / dfree / uaf / uninit）与 BOF 均使用统一的单警报 JSON，并由 FPhandler 研判。
 
 ---
 
@@ -74,7 +74,7 @@ cp script/config.env.example script/config.env
 | `semantic_rules` | 已审核语义规则 JSON（可选，Saber 加载） | 空 |
 | `deepseek_api_key` 等 | 对应 LLM 的 API Key | — |
 
-`defect_types` 合法值：`leak`、`dfree`、`uaf`、`uninit`、`bof`。追加 `bof` 可启用 BOF checker（产出仍为旧格式，见下文）。
+`defect_types` 合法值：`leak`、`dfree`、`uaf`、`uninit`、`bof`。
 
 ### 1.2 运行模式
 
@@ -126,7 +126,7 @@ canonical ID；Agent 使用 `B0001-A01` 形式的批内短 ID。conclusion 必�
 | Saber | `-dfree` | 重复释放（DoubleFree） |
 | Saber | `-uaf` | 释放后使用（UseAfterFree） |
 | Saber | `-uninit` | 未初始化使用（Uninitialized Use） |
-| BOF | `bof` | 缓冲区越界（BufferOverflow，**未改造**） |
+| BOF | `bof` | 缓冲区越界（BufferOverflow） |
 
 另有 `graph-reader -stat=false <input.bc>` 供 FPhandler 运行时查询 IR / 源码细节。
 
@@ -189,35 +189,17 @@ saber -uninit \
 
 终端 stdout 仅作运行日志，**不是**下游输入。
 
-### 2.2 BOF（尚未完成统一改造）
+### 2.2 BOF 统一单警报 JSON
 
-BOF 模块仍使用旧产出方式，**未**写入 `alerts/` 目录，**当前 FPhandler 不消费 BOF 警报**。
+BOF 将最终去重后的 MUST/MAY 告警写入
+`$out/alerts/buffer_overflow/<sha256>.json`。告警覆盖 GEP、memcpy/memmove、
+memset 与 strcpy/strcat 等访问类型。
 
-| 产出 | 说明 |
-|------|------|
-| `$out/${stem}_bof.txt` | 终端日志 tee 保存（`run_checkers.sh` 默认行为） |
-| `bof_slices.json`（或 `-llm-slice-out=` 指定路径） | 聚合 JSON，schema 为 `bof-slice/v1` |
-
-`bof-slice/v1` 结构概要：
-
-```json
-{
-  "schema": "bof-slice/v1",
-  "generated_by": "SVFmemplus-BOF",
-  "slice_count": 74,
-  "slices": [
-    {
-      "id": "GEP_OOB@path:line:col",
-      "kind": "GEP_OOB",
-      "static_verdict": "MAY",
-      "access": { "file", "line", "col", "base", "index_expr", "index_range_static" },
-      "buffer": { "capacity", "is_heap", "domain" },
-      "guards": [ ... ],
-      "code_snippet": ""
-    }
-  ]
-}
-```
+每条告警使用 `category: BUFFER_OVERFLOW`，不含 `path`。`access` 记录内存
+访问位置、基址、访问类型、索引或长度表达式及最终访问值域；`buffer` 记录
+合法容量值域；`variables` 记录参与推理的变量；`range_analysis` 按顺序记录
+值域种子、归纳传播、guard 收窄、最终访问范围和边界比较。`evidence.checker`
+保留 BOF 的 MUST/MAY 静态结论。
 
 启用 BOF 只需在 `defect_types` 中追加 `bof`：
 
@@ -229,10 +211,10 @@ defect_types=leak,dfree,uaf,uninit,bof
 或直接：
 
 ```bash
-bof -llm-slice-out=$out/${stem}_bof_slices.json $bc 2>&1 | tee $out/${stem}_bof.txt
+bof -report-dir=$out $bc
 ```
 
-后续计划：将 BOF 对齐 Saber 的单文件 `alerts/buffer_overflow/<sha256>.json` 格式并接入 FPhandler。
+BOF 在最终告警发射阶段直接生成上述格式，不经过报告后处理。
 
 ### 2.3 语义规则反馈（需求1 部分落地）
 
@@ -247,8 +229,8 @@ LLM 研判时通过 `semantic_candidates` 提出可复用的函数语义（如 u
 ### 3.1 输入发现
 
 - 根目录：`OUTPUT_DIR/alerts`（即 `config.env` 的 `out=` + `/alerts`）
-- 递归扫描所有 `.json` 文件
-- 通过 `alert_document.validate_document()` 校验 schema；不支持 BOF / 旧 slice 格式
+- 只扫描 `defect_types` 对应类别目录中的 `.json` 文件
+- FPhandler 信任 checker 生成的告警结构，只校验自己写回的分类值
 
 **不做的事：**
 
@@ -270,7 +252,8 @@ discover alerts/ → 加载 JSON → 跳过已有 classification 的条目
 |----------|--------|
 | `USE_AFTER_FREE` | 同一 `free` 位置（file + line） |
 | `UNINIT_USE` | 同一 `evidence.memory_object.type`（或 descriptor） |
-| 其他 | 每条独立 |
+| `BUFFER_OVERFLOW` | 同一 `access.kind`（GEP / memcpy / memset / strcpy） |
+| `MEMORY_LEAK` / `DOUBLE_FREE` | 每条独立 |
 
 - 单条和多条统一调用 `set_conclusion`
 - 每次调用必须传入 1–N 个批内短 ID；同一次调用中的警报共享分类和理由
@@ -281,7 +264,9 @@ discover alerts/ → 加载 JSON → 跳过已有 classification 的条目
 - `dump_source_snippet`、`dump_source_line`
 - `find_current_function`、`find_function_body`、`find_callers`
 
-Prompt 中直接嵌入完整警报 JSON；对 leak 类会说明 `paths` / `leak_condition` 语义。
+Prompt 中直接嵌入完整警报 JSON；对 leak 类会说明 `paths` /
+`leak_condition` 语义，对 BOF 会说明 `variables` / `range_analysis` 是按序
+排列的值域推理证据。
 
 ### 3.3 输出与写回
 
@@ -340,13 +325,60 @@ API Key 通过 `load_config` 导出为 `DEEPSEEK_API_KEY` 等环境变量。
 
 ---
 
+## 4. 五类告警统一性审计
+
+### 4.1 已统一的接口
+
+五类 checker 均直接生成 `$out/alerts/<category>/<sha256>.json`，公共外壳为：
+
+```json
+{
+  "alert_id": "sha256:...",
+  "category": "...",
+  "classification": null,
+  "reason": ""
+}
+```
+
+- `alert_id` 同时作为文件名和跨次运行的身份；重跑时保留已有
+  `classification` / `reason`。
+- 每个 checker 只清理自己类别下已经消失的旧文件，不删除其他类别结果。
+- FPhandler 通过 `AlertDocument` / `UnifiedAlert` 消费所选类别，统一完成发现、
+  短 ID 映射、Agent 调用和原子写回。
+- Saber 四类用 `path` 或 leak 的 `allocation + paths + leak_condition` 表达
+  值流；BOF 用 `access + buffer + variables + range_analysis` 表达值域证明，
+  不强制伪造 `path`。
+
+### 4.2 公共实现
+
+- `UnifiedAlertWriter` 统一完成 SHA-256、目录创建、旧分类保留、原子替换和
+  本类别 stale 文件清理；Saber 与 BOF 只提供稳定身份和类别证据。
+- `SourceEvidence` 统一解析 SVF 源码位置、映射源码根目录并读取上下文窗口。
+- FPhandler 的类别行为表集中提供主位置、分批键和 prompt 说明，主流程不再包含
+  按类别展开的条件链。
+- `defect_types` 同时控制 checker 调度和 FPhandler 消费范围，其他类别的历史结果
+  保留在输出目录中。
+- BOF 正式报告由 `BofAlertReporter` 负责；可选 sidecar 只处理自身中间数据，
+  FPhandler 是分类写回的唯一入口。
+- 旧 `memory_defect.py` 消费模型已经删除，五类告警统一使用 `UnifiedAlert`。
+
+### 4.3 失败语义
+
+FPhandler 不补全、不猜测也不降级处理生产者字段。类别行为所需字段缺失、Agent
+未完整分类或写回失败时，本次执行直接失败。告警结构的正确性由对应 checker
+实现保证。
+
+上述统一不改变 checker 的分析算法、告警字段、稳定身份或类别证据形状。
+
+---
+
 ## 需求与后续
 
 **需求1（部分实现）**：通过 Saber 语义规则接口，将 LLM 发现的初始化 / API 行为建模回静态分析器。
 
-**需求2（Saber 已实现）**：产出从 txt / 聚合 slice 升级为带路径、条件、源码上下文的单警报 JSON；BOF 待对齐。
+**需求2（已实现）**：五类告警均直接输出单警报 JSON；Saber 提供值流路径与条件，BOF 提供内存访问位置、参与变量和值域推理链。
 
-**需求3（预留）**：未来图模型排序模块可直接消费 `alerts/` 中稳定 `alert_id` 及 path / evidence 字段；`classification` 槽位已预留。
+**需求3（预留）**：未来图模型排序模块可直接消费 `alerts/` 中稳定 `alert_id` 及类别专属 evidence；`classification` 槽位已预留。
 
 ---
 
@@ -362,6 +394,6 @@ openEuler分析流程/
 ├── SVFmemplus/             # 静态分析器源码
 ├── FPhandler/              # LLM 分拣（run.py + alert_document.py）
 └── output/<run>/           # 示例输出
-    ├── alerts/             # Saber 单警报 JSON（权威数据源）
+    ├── alerts/             # 五类单警报 JSON（权威数据源）
     └── fphandler/          # FPhandler 日志与语义规则
 ```

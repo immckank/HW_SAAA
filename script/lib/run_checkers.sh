@@ -46,7 +46,7 @@ run_one_checker() {
       ;;
     bof)
       echo "==> bof $bc_path"
-      bof "$bc_path" 2>&1 | tee "$out_dir/${stem}_bof.txt"
+      bof -report-dir="$out_dir" "$bc_path" 2>&1
       ;;
     *)
       echo "error: 未知 defect_type: $checker" >&2

@@ -8,6 +8,8 @@ __pycache__/
 
 # 本地运行配置（含 API Key，仅保留 config.env.example）
 script/config.env
+script/config.env.*
+!script/config.env.example
 
 # 分析产物：保留 output/ 空壳，忽略实际产出
 output/*

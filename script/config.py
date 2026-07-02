@@ -8,6 +8,13 @@ from __future__ import annotations
 
 import os
 _VALID = frozenset({"leak", "dfree", "uaf", "uninit", "bof"})
+_CATEGORY_BY_DEFECT_TYPE = {
+    "leak": "MEMORY_LEAK",
+    "dfree": "DOUBLE_FREE",
+    "uaf": "USE_AFTER_FREE",
+    "uninit": "UNINIT_USE",
+    "bof": "BUFFER_OVERFLOW",
+}
 _DEFAULT_DEFECT_TYPES = "leak,dfree,uaf,uninit"
 
 
@@ -56,6 +63,7 @@ PROJECT_ROOT = _src
 BITCODE_PATH = _bc
 BC_STEM = _stem
 DEFECT_TYPES = _defect_types
+ALERT_CATEGORIES = [_CATEGORY_BY_DEFECT_TYPE[item] for item in _defect_types]
 
 ALERT_DIR = os.path.join(_out, "alerts")
 
@@ -70,7 +78,7 @@ SEMANTIC_RULE_REPOSITORY = os.path.join(_out, "semantic_rules.json")
 LLM_TYPE = os.environ.get("llm_type", "DeepSeek")
 SVF_DOCKER_IMAGE = _svf_docker
 ALERT_BATCH_SIZE = 8
-AGENT_MAX_TURNS = int(os.environ.get("agent_max_turns", "32"))
+AGENT_MAX_TURNS = int(os.environ.get("agent_max_turns", "64"))
 AGENT_CONCLUSION_RESERVE_TURNS = int(
     os.environ.get("agent_conclusion_reserve_turns", "10")
 )
