@@ -332,7 +332,9 @@ python3 FPhandler/run.py --config script/config.py --stats-only
 | `PROJECT_ROOT` | `src` |
 | `LLM_TYPE` | `llm_type` |
 | `SVF_DOCKER_IMAGE` | `svf_docker_image`（graph-reader Docker 回退） |
-| `ALERT_BATCH_SIZE` | 默认 `5` |
+| `ALERT_BATCH_SIZE` | 默认 `8` |
+| `AGENT_MAX_TURNS` | `agent_max_turns`，Agent 每批最大轮次，默认 `32` |
+| `AGENT_CONCLUSION_RESERVE_TURNS` | `agent_conclusion_reserve_turns`，批末强制提交结论的保留轮次，默认 `10` |
 
 API Key 通过 `load_config` 导出为 `DEEPSEEK_API_KEY` 等环境变量。
 

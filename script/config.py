@@ -70,4 +70,8 @@ SEMANTIC_RULE_REPOSITORY = os.path.join(_out, "semantic_rules.json")
 LLM_TYPE = os.environ.get("llm_type", "DeepSeek")
 SVF_DOCKER_IMAGE = _svf_docker
 ALERT_BATCH_SIZE = 8
+AGENT_MAX_TURNS = int(os.environ.get("agent_max_turns", "32"))
+AGENT_CONCLUSION_RESERVE_TURNS = int(
+    os.environ.get("agent_conclusion_reserve_turns", "10")
+)
 STATS_ONLY = False
