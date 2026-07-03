@@ -45,7 +45,7 @@ load_config
 print_config_summary
 
 if [[ "$RUN_SVF" -eq 1 ]]; then
-  "$SCRIPT_DIR/run_svf.sh" "${EXTRA_SVF[@]}"
+  bash "$SCRIPT_DIR/run_svf.sh" "${EXTRA_SVF[@]}"
 fi
 
 if [[ "$RUN_FPH" -eq 1 ]]; then

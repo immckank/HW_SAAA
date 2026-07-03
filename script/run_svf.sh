@@ -57,7 +57,7 @@ shopt -u nullglob
 
 _run_svf_native() {
   export bc_path="$bc" out_dir="$out" stem="$stem" saber_src="$src" svf_root="$svf_root"
-  "$SCRIPT_DIR/lib/run_svf_inner.sh"
+  bash "$SCRIPT_DIR/lib/run_svf_inner.sh"
 }
 
 _run_svf_docker() {
@@ -92,7 +92,7 @@ _run_svf_docker() {
       if [[ -n "${semantic_rules:-}" && -f /data/semantic_rules.json ]]; then
         export semantic_rules=/data/semantic_rules.json
       fi
-      /pipeline/lib/run_svf_inner.sh
+      bash /pipeline/lib/run_svf_inner.sh
       if [[ -d /output/alerts ]]; then
         chown -R "${host_uid:?}:${host_gid:?}" /output/alerts
       fi
