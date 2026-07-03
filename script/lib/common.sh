@@ -45,6 +45,33 @@ parse_defect_types() {
 }
 
 load_config() {
+  if pipeline_in_container; then
+    : "${bc:?容器内缺少 bc=}"
+    : "${out:?容器内缺少 out=}"
+    : "${src:?容器内缺少 src=}"
+    : "${svf_root:?容器内缺少 svf_root=}"
+    : "${fph_root:?容器内缺少 fph_root=}"
+
+    stem="${stem:-$(basename "$bc" .bc)}"
+    ws="${ws:-$(cd "$(script_root)/.." && pwd)}"
+    docker_name="${docker_name:-}"
+    llm_type="${llm_type:-DeepSeek}"
+    project_label="${project_label:-$stem}"
+    project_desc="${project_desc:-}"
+    semantic_rules="${semantic_rules:-}"
+
+    parse_defect_types "${defect_types:-leak,dfree,uaf,uninit}"
+
+    export ws bc out src stem defect_types
+    export svf_root fph_root docker_name
+    export llm_type project_label project_desc semantic_rules
+    export DEEPSEEK_API_KEY="${DEEPSEEK_API_KEY:-}"
+    export QWEN_API_KEY="${QWEN_API_KEY:-}"
+    export EXAMPLE_KEY="${EXAMPLE_KEY:-}"
+    export HW_KEY="${HW_KEY:-}"
+    return 0
+  fi
+
   local cfg
   cfg="$(config_file_path)"
   if [[ ! -f "$cfg" ]]; then
@@ -67,8 +94,7 @@ load_config() {
 
   svf_root="${svf_root:-$ws/SVFmemplus}"
   fph_root="${fph_root:-$ws/FPhandler}"
-  svf_docker_image="${svf_docker_image:-nf-image:llvm21}"
-  svf_mode="${svf_mode:-docker}"
+  docker_name="${docker_name:-}"
   llm_type="${llm_type:-DeepSeek}"
   project_label="${project_label:-$stem}"
   project_desc="${project_desc:-}"
@@ -80,20 +106,24 @@ load_config() {
 
   parse_defect_types "${defect_types:-leak,dfree,uaf,uninit}"
 
+  svf_root="$(cd "$svf_root" && pwd)"
+  fph_root="$(cd "$fph_root" && pwd)"
+
   export ws bc out src stem defect_types
-  export svf_root fph_root svf_docker_image svf_mode
+  export svf_root fph_root docker_name
   export llm_type project_label project_desc semantic_rules
   export DEEPSEEK_API_KEY="$deepseek_api_key"
   export QWEN_API_KEY="$qwen_api_key"
   export EXAMPLE_KEY="$example_key"
   export HW_KEY="$hw_key"
-  export SVF_DOCKER_IMAGE="$svf_docker_image"
 
   [[ -f "$bc" ]] || { echo "error: bc 不存在: $bc" >&2; return 1; }
   [[ -d "$src" ]] || { echo "error: src 不存在: $src" >&2; return 1; }
 }
 
 print_config_summary() {
+  local runtime="${docker_name:-native}"
+  [[ -z "$docker_name" ]] && runtime="native"
   cat <<EOF
 pipeline config
   bc           = $bc
@@ -101,7 +131,82 @@ pipeline config
   src          = $src
   stem         = $stem
   defect_types = $defect_types
-  svf          = $svf_mode ($svf_root)
+  runtime      = $runtime
+  svf_root     = $svf_root
   fph          = $fph_root
 EOF
+}
+
+pipeline_in_container() {
+  [[ "${PIPELINE_IN_CONTAINER:-}" == 1 ]]
+}
+
+should_use_docker() {
+  [[ -n "${docker_name:-}" ]] && ! pipeline_in_container
+}
+
+# 构建 docker run 挂载与 env
+pipeline_docker_vols() {
+  local bc_base
+  bc_base="$(basename "$bc")"
+  PIPELINE_DOCKER_VOLS=(
+    -v "$svf_root:/SVFmemplus"
+    -v "$bc:/data/$bc_base:ro"
+    -v "$out:/output"
+    -v "$src:/source/FalconFS:ro"
+    -v "$fph_root:/FPhandler"
+    -v "$(script_root):/pipeline:ro"
+  )
+  if [[ -n "${semantic_rules:-}" && -f "$semantic_rules" ]]; then
+    PIPELINE_DOCKER_VOLS+=(-v "$semantic_rules:/data/semantic_rules.json:ro")
+  fi
+}
+
+pipeline_docker_env() {
+  local bc_base host_uid host_gid
+  bc_base="$(basename "$bc")"
+  host_uid="$(id -u)"
+  host_gid="$(id -g)"
+  PIPELINE_DOCKER_ENV=(
+    -e PIPELINE_IN_CONTAINER=1
+    -e "ws=$ws"
+    -e "bc=/data/$bc_base"
+    -e "out=/output"
+    -e "src=/source/FalconFS"
+    -e "svf_root=/SVFmemplus"
+    -e "fph_root=/FPhandler"
+    -e "stem=$stem"
+    -e "defect_types=$defect_types"
+    -e "docker_name=$docker_name"
+    -e "llm_type=$llm_type"
+    -e "project_label=$project_label"
+    -e "project_desc=$project_desc"
+    -e "host_uid=$host_uid"
+    -e "host_gid=$host_gid"
+    -e "DEEPSEEK_API_KEY=${DEEPSEEK_API_KEY:-}"
+    -e "QWEN_API_KEY=${QWEN_API_KEY:-}"
+    -e "EXAMPLE_KEY=${EXAMPLE_KEY:-}"
+    -e "HW_KEY=${HW_KEY:-}"
+    -e "agent_max_turns=${agent_max_turns:-64}"
+    -e "agent_conclusion_reserve_turns=${agent_conclusion_reserve_turns:-10}"
+  )
+  if [[ -n "${semantic_rules:-}" && -f "$semantic_rules" ]]; then
+    PIPELINE_DOCKER_ENV+=(-e "semantic_rules=/data/semantic_rules.json")
+  else
+    PIPELINE_DOCKER_ENV+=(-e "semantic_rules=")
+  fi
+  if [[ -n "${FORCE_BUILD:-}" ]]; then
+    PIPELINE_DOCKER_ENV+=(-e FORCE_BUILD=1)
+  fi
+}
+
+exec_in_docker() {
+  pipeline_docker_vols
+  pipeline_docker_env
+  docker run --rm \
+    "${PIPELINE_DOCKER_VOLS[@]}" \
+    "${PIPELINE_DOCKER_ENV[@]}" \
+    -w /SVFmemplus \
+    "$docker_name" \
+    bash /pipeline/run_pipeline.sh "$@"
 }

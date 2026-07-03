@@ -65,8 +65,7 @@ cp script/config.env.example script/config.env
 | `src` | 源码根目录（Docker 内挂载为 `/source/FalconFS`） | `object2_falconfs/source/FalconFS` |
 | `defect_types` | 要运行的 checker，逗号分隔 | `leak,dfree,uaf,uninit` |
 | `svf_root` | SVFmemplus 源码路径 | `$ws/SVFmemplus` |
-| `svf_docker_image` | Docker 镜像名 | `nf-image:llvm21` |
-| `svf_mode` | 运行模式：`docker` 或 `native` | `docker` |
+| `docker_name` | Docker 镜像名；**空** = 全局本机执行；**非空** = SVF + FPhandler 均在同一容器内 | `""` 或 `nf-image:llvm21` |
 | `fph_root` | FPhandler 路径 | `$ws/FPhandler` |
 | `llm_type` | LLM 后端：`DeepSeek` / `Qwen` / `Example` / `HW` | `DeepSeek` |
 | `project_label` | 传给 Agent 的项目标识 | bc 文件名 stem |
@@ -78,17 +77,18 @@ cp script/config.env.example script/config.env
 
 ### 1.2 运行模式
 
-**Docker 模式（默认）**
+**本机模式（`docker_name=""`）**
 
-- `svf_mode=docker` 时，`run_svf.sh` 为每个 checker 单独起一个容器
-- 挂载：`SVFmemplus`、`bc`、`out`、`src`（只读）、可选 `semantic_rules`
+- `run_pipeline.sh` / `run_svf.sh` 直接在宿主机执行
+- SVF 阶段由 `ensure_saber_bof_env` 负责 `source setup.sh` 或 `source build.sh`
+- FPhandler 的 `CommandCaller` 在 subprocess 内 `source setup.sh` 后启动 `graph-reader`（不污染 Python 进程，不唤起 Docker）
+
+**容器模式（`docker_name` 非空）**
+
+- 入口脚本启动**一个**容器，SVF 与 FPhandler **均在同一容器内**完成
+- 挂载：`SVFmemplus`、`bc`、`out`、`src`（只读）、`FPhandler`、`script/`、可选 `semantic_rules`
 - 容器内设置 `SABER_SOURCE_ROOT=/source/FalconFS`，供报告嵌入源码上下文
 - 运行前会删除 `out/` 下旧格式产物（`*_report.json`、`*_slices.json`、`*.txt` 等），保证目录内只有统一的 `alerts/` 树
-
-**Native 模式**
-
-- `./script/run_svf.sh --native`，或 `svf_mode=native`
-- 在本机已 `source SVFmemplus/setup.sh` 的前提下直接调用 `saber` / `bof`
 
 ### 1.3 运行命令
 
@@ -103,10 +103,11 @@ cp script/config.env.example script/config.env
 ./script/run_pipeline.sh --svf-only          # 只跑 SVF
 ./script/run_pipeline.sh --fph-only          # 只跑 FPhandler（需 alerts/ 已存在）
 ./script/run_pipeline.sh --stats-only        # 只统计警报 JSON，不调 LLM
+./script/run_pipeline.sh --force             # 强制重编 SVFmemplus 后再跑
 ./script/run_svf.sh --checkers leak,dfree    # 只跑指定 checker
-./script/run_svf.sh --native                 # 本机 native 模式
+./script/run_svf.sh --force                  # 强制重编后再跑 SVF
 
-# 单独跑 FPhandler
+# 单独跑 FPhandler（需先 load_config）
 source script/lib/common.sh && load_config
 cd FPhandler && python3 run.py --config ../script/config.py
 ```
@@ -316,7 +317,7 @@ python3 FPhandler/run.py --config script/config.py --stats-only
 | `BITCODE_PATH` | `bc` |
 | `PROJECT_ROOT` | `src` |
 | `LLM_TYPE` | `llm_type` |
-| `SVF_DOCKER_IMAGE` | `svf_docker_image`（graph-reader Docker 回退） |
+| `SVF_ROOT` | `svf_root`（CommandCaller 定位 setup.sh） |
 | `ALERT_BATCH_SIZE` | 默认 `8` |
 | `AGENT_MAX_TURNS` | `agent_max_turns`，Agent 每批最大轮次，默认 `32` |
 | `AGENT_CONCLUSION_RESERVE_TURNS` | `agent_conclusion_reserve_turns`，批末强制提交结论的保留轮次，默认 `10` |

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# 在 SVF Docker 镜像内强制全量重新编译 SVFmemplus（始终 source ./build.sh，不跳过）。
+# 在 Docker 镜像内强制全量重新编译 SVFmemplus（始终 source ./build.sh，不跳过）。
 #
 # 用法:
 #   ./script/rebuild_svf.sh
@@ -7,7 +7,7 @@
 #   ./script/rebuild_svf.sh debug sta_lib
 #
 # build.sh 参数原样传入容器（如 debug、sta_lib、dyn_lib、nortti）。
-# 读取 script/config.env 中的 svf_root、svf_docker_image；不依赖 bc/out/src。
+# 读取 script/config.env 中的 svf_root、docker_name；不依赖 bc/out/src。
 
 set -euo pipefail
 
@@ -22,15 +22,15 @@ load_svf_build_config() {
     # shellcheck disable=SC1090
     source "$cfg"
   else
-    echo "hint: 未找到 $cfg，使用默认 svf_root / svf_docker_image" >&2
+    echo "hint: config not found at ${cfg}, using default svf_root / docker_name" >&2
   fi
 
   ws="${ws:-$(cd "$SCRIPT_DIR/.." && pwd)}"
   svf_root="${svf_root:-$ws/SVFmemplus}"
-  svf_docker_image="${svf_docker_image:-nf-image:llvm21}"
+  docker_name="${docker_name:-}"
 
   svf_root="$(cd "$svf_root" && pwd)"
-  export ws svf_root svf_docker_image
+  export ws svf_root docker_name
 }
 
 detect_build_type() {
@@ -57,7 +57,12 @@ quote_args() {
 BUILD_ARGS=("$@")
 
 load_svf_build_config
-detect_build_type "${BUILD_ARGS[@]}"
+detect_build_type ${BUILD_ARGS+"${BUILD_ARGS[@]}"}
+
+if [[ -z "$docker_name" ]]; then
+  echo "error: rebuild_svf 需要在容器内编译，请在 config.env 设置 docker_name" >&2
+  exit 1
+fi
 
 if [[ ! -f "$svf_root/build.sh" ]]; then
   echo "error: SVFmemplus 目录无效（缺少 build.sh）: $svf_root" >&2
@@ -69,24 +74,22 @@ quote_args BUILD_ARGS quoted
 build_arg_str="${quoted[*]}"
 
 echo "==> 强制重编 SVFmemplus（Docker）"
-echo "    svf_root         = $svf_root"
-echo "    svf_docker_image = $svf_docker_image"
-echo "    build_type       = $BUILD_TYPE"
+echo "    svf_root    = $svf_root"
+echo "    docker_name = $docker_name"
+echo "    build_type  = $BUILD_TYPE"
 if [[ ${#BUILD_ARGS[@]} -gt 0 ]]; then
-  echo "    build.sh args    = ${BUILD_ARGS[*]}"
+  echo "    build.sh args = ${BUILD_ARGS[*]}"
 fi
 
 docker run --rm \
   -v "$svf_root:/SVFmemplus" \
   -w /SVFmemplus \
-  "$svf_docker_image" \
+  "$docker_name" \
   bash -lc "
     set -eo pipefail
     cd /SVFmemplus
-    # setup.sh 若已有 llvm/z3 预置目录会 export LLVM_DIR/Z3_DIR
     source ./setup.sh ${BUILD_TYPE}
     echo '==> 容器内执行: source ./build.sh ${build_arg_str}'
-    # build.sh 在未设置 LLVM_DIR 时会下载依赖；其内部引用 \$LLVM_DIR 与 set -u 不兼容
     set +u
     source ./build.sh ${build_arg_str}
   "
@@ -94,7 +97,7 @@ docker run --rm \
 docker run --rm \
   -v "$svf_root:/SVFmemplus" \
   -w /SVFmemplus \
-  "$svf_docker_image" \
+  "$docker_name" \
   bash -lc "
     set -eo pipefail
     source ./setup.sh ${BUILD_TYPE}

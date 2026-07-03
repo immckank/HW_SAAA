@@ -56,7 +56,7 @@ _stem = os.environ.get("stem", "").strip() or os.path.splitext(os.path.basename(
 _defect_types = _parse_defect_types(
     os.environ.get("defect_types", _DEFAULT_DEFECT_TYPES)
 )
-_svf_docker = os.environ.get("svf_docker_image", "nf-image:llvm21").strip()
+_svf_root = _abs(os.environ.get("svf_root", os.path.join(os.path.dirname(_bc), "..", "SVFmemplus")))
 
 OUTPUT_DIR = _out
 PROJECT_ROOT = _src
@@ -76,7 +76,7 @@ RES_ROOT_PATH = os.path.join(_out, "fphandler")
 SEMANTIC_RULE_REPOSITORY = os.path.join(_out, "semantic_rules.json")
 
 LLM_TYPE = os.environ.get("llm_type", "DeepSeek")
-SVF_DOCKER_IMAGE = _svf_docker
+SVF_ROOT = _svf_root
 ALERT_BATCH_SIZE = 8
 AGENT_MAX_TURNS = int(os.environ.get("agent_max_turns", "64"))
 AGENT_CONCLUSION_RESERVE_TURNS = int(
