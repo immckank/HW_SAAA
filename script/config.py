@@ -78,6 +78,7 @@ SEMANTIC_RULE_REPOSITORY = os.path.join(_out, "semantic_rules.json")
 LLM_TYPE = os.environ.get("llm_type", "DeepSeek")
 SVF_ROOT = _svf_root
 ALERT_BATCH_SIZE = 8
+BOF_BATCH_SIZE = 32
 AGENT_MAX_TURNS = int(os.environ.get("agent_max_turns", "64"))
 AGENT_CONCLUSION_RESERVE_TURNS = int(
     os.environ.get("agent_conclusion_reserve_turns", "10")
