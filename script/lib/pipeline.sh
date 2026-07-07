@@ -38,3 +38,25 @@ run_fph_phase() {
   cd "$fph_root"
   python3 run.py --config "$config_py" "${FPH_ARGS[@]}"
 }
+
+count_pending_alerts() {
+  local alerts_dir="$out/alerts"
+  python3 - "$alerts_dir" <<'PY'
+import json
+import pathlib
+import sys
+
+root = pathlib.Path(sys.argv[1])
+pending = 0
+if root.is_dir():
+    for path in root.rglob("*.json"):
+        try:
+            with path.open(encoding="utf-8") as handle:
+                document = json.load(handle)
+        except (OSError, json.JSONDecodeError):
+            continue
+        if isinstance(document, dict) and document.get("classification") is None:
+            pending += 1
+print(pending)
+PY
+}

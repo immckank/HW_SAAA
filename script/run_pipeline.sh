@@ -24,6 +24,7 @@ RUN_FPH=1
 FORCE_BUILD=""
 EXTRA_CHECKERS=""
 FPH_ARGS=()
+RUN_CLASSIFICATION=1
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -35,7 +36,7 @@ while [[ $# -gt 0 ]]; do
       EXTRA_CHECKERS=$2
       shift 2
       ;;
-    --stats-only) FPH_ARGS+=(--stats-only); shift ;;
+    --stats-only) FPH_ARGS+=(--stats-only); RUN_CLASSIFICATION=0; shift ;;
     -h|--help)
       sed -n '2,12p' "$0"
       exit 0
@@ -58,7 +59,7 @@ if ! pipeline_in_container; then
   fi
   print_config_summary
   if should_use_docker; then
-    local docker_args=()
+    docker_args=()
     [[ "$RUN_FPH" -eq 0 ]] && docker_args+=(--svf-only)
     [[ "$RUN_SVF" -eq 0 ]] && docker_args+=(--fph-only)
     [[ -n "$FORCE_BUILD" ]] && docker_args+=(--force)
@@ -67,6 +68,7 @@ if ! pipeline_in_container; then
       docker_args+=("${FPH_ARGS[@]}")
     fi
     exec_in_docker "${docker_args[@]}"
+    exit 0
   fi
 else
   load_config
@@ -85,5 +87,14 @@ if [[ "$RUN_SVF" -eq 1 ]]; then
 fi
 
 if [[ "$RUN_FPH" -eq 1 ]]; then
-  run_fph_phase
+  fph_status=0
+  run_fph_phase || fph_status=$?
+
+  pending_alerts="$(count_pending_alerts)"
+  if (( RUN_CLASSIFICATION == 1 && pending_alerts > 0 )); then
+    echo "==> 首轮 FPhandler 后仍有 ${pending_alerts} 个 classification=null 警报，自动补跑一轮 --fph-only"
+    run_fph_phase
+  elif (( fph_status != 0 )); then
+    exit "$fph_status"
+  fi
 fi

@@ -23,6 +23,10 @@ build_common/
 infer-linux-x86_64-v1.2.0/
 infer-linux-x86_64-v1.2.0.tar.xz
 
+# Linux 数据集（本地构建与分析产物）
+linux_dataset/
+linux数据集.md
+
 # 根目录其他文档（本仓库仅保留 SVFmemplus分析管线.md）
 README.md
 README.bc.md

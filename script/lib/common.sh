@@ -10,6 +10,10 @@ script_root() {
 }
 
 config_file_path() {
+  if [[ -n "${PIPELINE_CONFIG:-}" ]]; then
+    printf '%s\n' "$PIPELINE_CONFIG"
+    return 0
+  fi
   printf '%s\n' "$(script_root)/config.env"
 }
 
@@ -203,7 +207,7 @@ pipeline_docker_env() {
 exec_in_docker() {
   pipeline_docker_vols
   pipeline_docker_env
-  docker run --rm \
+  exec docker run --rm \
     "${PIPELINE_DOCKER_VOLS[@]}" \
     "${PIPELINE_DOCKER_ENV[@]}" \
     -w /SVFmemplus \
