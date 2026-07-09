@@ -55,6 +55,7 @@ load_config() {
     : "${src:?容器内缺少 src=}"
     : "${svf_root:?容器内缺少 svf_root=}"
     : "${fph_root:?容器内缺少 fph_root=}"
+    : "${active_learning_root:?容器内缺少 active_learning_root=}"
 
     stem="${stem:-$(basename "$bc" .bc)}"
     ws="${ws:-$(cd "$(script_root)/.." && pwd)}"
@@ -67,7 +68,7 @@ load_config() {
     parse_defect_types "${defect_types:-leak,dfree,uaf,uninit}"
 
     export ws bc out src stem defect_types
-    export svf_root fph_root docker_name
+    export svf_root fph_root active_learning_root docker_name
     export llm_type project_label project_desc semantic_rules
     export DEEPSEEK_API_KEY="${DEEPSEEK_API_KEY:-}"
     export QWEN_API_KEY="${QWEN_API_KEY:-}"
@@ -98,6 +99,7 @@ load_config() {
 
   svf_root="${svf_root:-$ws/SVFmemplus}"
   fph_root="${fph_root:-$ws/FPhandler}"
+  active_learning_root="${active_learning_root:-$ws/ActiveLearning}"
   docker_name="${docker_name:-}"
   llm_type="${llm_type:-DeepSeek}"
   project_label="${project_label:-$stem}"
@@ -112,9 +114,10 @@ load_config() {
 
   svf_root="$(cd "$svf_root" && pwd)"
   fph_root="$(cd "$fph_root" && pwd)"
+  active_learning_root="$(cd "$active_learning_root" && pwd)"
 
   export ws bc out src stem defect_types
-  export svf_root fph_root docker_name
+  export svf_root fph_root active_learning_root docker_name
   export llm_type project_label project_desc semantic_rules
   export DEEPSEEK_API_KEY="$deepseek_api_key"
   export QWEN_API_KEY="$qwen_api_key"
@@ -138,6 +141,7 @@ pipeline config
   runtime      = $runtime
   svf_root     = $svf_root
   fph          = $fph_root
+  active       = $active_learning_root
 EOF
 }
 
@@ -159,6 +163,7 @@ pipeline_docker_vols() {
     -v "$out:/output"
     -v "$src:/source/FalconFS:ro"
     -v "$fph_root:/FPhandler"
+    -v "$active_learning_root:/ActiveLearning"
     -v "$(script_root):/pipeline:ro"
   )
   if [[ -n "${semantic_rules:-}" && -f "$semantic_rules" ]]; then
@@ -179,6 +184,7 @@ pipeline_docker_env() {
     -e "src=/source/FalconFS"
     -e "svf_root=/SVFmemplus"
     -e "fph_root=/FPhandler"
+    -e "active_learning_root=/ActiveLearning"
     -e "stem=$stem"
     -e "defect_types=$defect_types"
     -e "docker_name=$docker_name"

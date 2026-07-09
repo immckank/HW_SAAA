@@ -74,6 +74,24 @@ PROJECT_DESC = os.environ.get("project_desc", "")
 
 RES_ROOT_PATH = os.path.join(_out, "fphandler")
 SEMANTIC_RULE_REPOSITORY = os.path.join(_out, "semantic_rules.json")
+ACTIVE_LEARNING_ROOT = os.path.abspath(
+    os.environ.get(
+        "active_learning_root",
+        os.path.join(os.path.dirname(os.path.dirname(__file__)), "ActiveLearning"),
+    )
+)
+ACTIVE_LEARNING_OUTPUT_DIR = os.path.join(_out, "active_learning")
+ACTIVE_LEARNING_DATASET = os.path.join(
+    ACTIVE_LEARNING_OUTPUT_DIR, "predict_dataset"
+)
+ACTIVE_LEARNING_PREDICTIONS = os.path.join(
+    ACTIVE_LEARNING_OUTPUT_DIR, "predictions.csv"
+)
+ACTIVE_LEARNING_RANKING = os.path.join(ACTIVE_LEARNING_OUTPUT_DIR, "ranking.jsonl")
+ACTIVE_LEARNING_FEEDBACK_ALERTS = os.path.join(
+    ACTIVE_LEARNING_OUTPUT_DIR, "feedback_alerts.txt"
+)
+ACTIVE_LEARNING_LABELS = os.path.join(ACTIVE_LEARNING_OUTPUT_DIR, "labels.jsonl")
 
 LLM_TYPE = os.environ.get("llm_type", "DeepSeek")
 SVF_ROOT = _svf_root

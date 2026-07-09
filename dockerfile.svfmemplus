@@ -23,6 +23,9 @@ RUN python3 -m venv /opt/venv && \
     /opt/venv/bin/pip install --upgrade pip setuptools wheel && \
     /opt/venv/bin/pip install openai google-genai && \
     /opt/venv/bin/pip install tree_sitter tree_sitter_languages tree_sitter_c pytest && \
+    /opt/venv/bin/pip install numpy pandas scikit-learn tqdm matplotlib seaborn && \
+    /opt/venv/bin/pip install torch --index-url https://download.pytorch.org/whl/cpu && \
+    /opt/venv/bin/pip install torch-geometric && \
     rm -rf /var/lib/apt/lists/*
 
 

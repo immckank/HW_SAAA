@@ -2,7 +2,18 @@
 
 ## 概述
 
-管线分为两步：**Step1 静态分析**（SVFmemplus）产出单警报 JSON；**Step2 LLM 分拣**（FPhandler）读取同一 JSON、调用 Agent 研判，并把结论写回原文件。
+管线基础形态分为两步：**Step1 静态分析**（SVFmemplus）产出单警报 JSON；**Step2 LLM 分拣**（FPhandler）读取同一 JSON、调用 Agent 研判，并把结论写回原文件。
+
+在 Step1 与 Step2 之上，**主动学习闭环**（`script/run_active_learning_loop.sh`）串联图导出、模型排序、反馈选择与 LLM 标注，形成可重复的多轮迭代：
+
+```text
+SVFmemplus 产出警报集合
+  → ActiveLearning 对警报排序（rank-alerts）
+  → 按排序选出部分警报待反馈（select-feedback；原设计为人工，现由 FPhandler LLM Agent 替代）
+  → FPhandler 单条分类并追加 classifications[] 历史
+  → collect-feedback 汇总 labels.jsonl
+  → （多轮）用累积标签重训模型后重跑，排序逐步更精准
+```
 
 Saber 四类（leak / dfree / uaf / uninit）与 BOF 均使用统一的单警报 JSON，并由 FPhandler 研判。
 
@@ -27,14 +38,18 @@ Saber 四类（leak / dfree / uaf / uninit）与 BOF 均使用统一的单警报
 
 ### SVFmemplus 构建
 
-Docker 镜像 `nf-image:llvm21`（见 `dockerfile.svfmemplus`）：
+Docker 镜像 `nf-image:llvm21`（见 `dockerfile.svfmemplus`）；主动学习验收镜像为 `SAAA:latest`（在同一 Dockerfile 上构建，预装 ActiveLearning 依赖）：
 
 ```bash
+# 仅 SVFmemplus 构建
 docker run --rm \
   -v "/path/to/SVFmemplus":/SVFmemplus \
   -w /SVFmemplus \
   nf-image:llvm21 \
   bash -lc 'source ./build.sh'
+
+# 主动学习闭环（config.env 中 docker_name="SAAA:latest"）
+docker build -f dockerfile.svfmemplus -t SAAA:latest .
 ```
 
 或在已满足依赖的环境中：
@@ -67,6 +82,7 @@ cp script/config.env.example script/config.env
 | `svf_root` | SVFmemplus 源码路径 | `$ws/SVFmemplus` |
 | `docker_name` | Docker 镜像名；**空** = 全局本机执行；**非空** = SVF + FPhandler 均在同一容器内 | `""` 或 `nf-image:llvm21` |
 | `fph_root` | FPhandler 路径 | `$ws/FPhandler` |
+| `active_learning_root` | ActiveLearning 路径 | `$ws/ActiveLearning` |
 | `llm_type` | LLM 后端：`DeepSeek` / `Qwen` / `Example` / `HW` | `DeepSeek` |
 | `project_label` | 传给 Agent 的项目标识 | bc 文件名 stem |
 | `project_desc` | 项目背景描述（可选） | 空 |
@@ -98,6 +114,11 @@ cp script/config.env.example script/config.env
 
 # 完整管线：SVF → FPhandler
 ./script/run_pipeline.sh
+
+# 主动学习闭环一轮：SVF → heap graph export → 随机/配置模型推理
+# → 警报排序 → 每类选一条 → FPhandler LLM 反馈 → classifications[] + labels.jsonl
+# 详见下文「5. 主动学习闭环」
+./script/run_active_learning_loop.sh
 
 # 分步 / 调试
 ./script/run_pipeline.sh --svf-only          # 只跑 SVF
@@ -158,6 +179,50 @@ $out/alerts/
 | `evidence` | `memory_object`（类型、分配器、描述符等）+ `checker`（报告子类型、是否截断等） |
 | `classification` | 初始为 `null`；FPhandler 写回 `TP` / `FP` / `UNCERTAIN` |
 | `reason` | 初始为 `""`；FPhandler 写回研判理由 |
+| `active_learning` | 主动学习元数据，包含图 ID、score、rank、match_status |
+| `classifications` | 多轮分类历史数组；顶层 classification/reason 是最新结论缓存 |
+
+**主动学习字段**
+
+```json
+{
+  "active_learning": {
+    "schema_version": "active-learning/v1",
+    "graph_ids": [],
+    "match_status": "unresolved",
+    "score": null,
+    "rank": null,
+    "last_model": null
+  },
+  "classifications": []
+}
+```
+
+`$out/active_learning/` 目录结构：
+
+```text
+active_learning/
+├── predict_dataset/raw/<stem>/
+│   ├── 0.node.csv
+│   ├── 0.edge.csv
+│   ├── idToGraph.csv
+│   └── graph_index.csv
+├── predictions.csv
+├── ranking.jsonl
+├── feedback_alerts.txt
+└── labels.jsonl
+```
+
+CSV schema:
+
+- node: `id,pattern,type,level,pointedBy`
+- edge: `srcid,tgtid,type`
+- `idToGraph.csv`: 无表头，每行一个 graph ID
+- `graph_index.csv`: `graph_id,object_id,file,line,column,source_loc`，用于将告警证据位置回填到 `active_learning.graph_ids`
+
+`edge.type` 与模型 `edge_type_vocab_size=100` 对齐：
+`0=IntraDirectVF`，`1=IntraIndirectVF`，`2=CallDirVF`，`3=RetDirVF`，
+`4=CallIndVF`，`5=RetIndVF`，`6=ThreadMHPIndirectVF`，`7..99` 保留。
 
 **非 leak 类（dfree / uaf / uninit）**
 
@@ -299,6 +364,56 @@ python3 FPhandler/semantic_rules.py $out/semantic_rules.json \
 
 **幂等性**：已有 `classification` 的非空警报会被跳过，可安全重复 `./script/run_pipeline.sh --fph-only`。
 
+### 3.5 单警报分类与多轮历史
+
+主动学习闭环要求同一条警报可被多次分类，且每次结论带时间戳留档。实现分两层：
+
+| 组件 | 路径 | 职责 |
+|------|------|------|
+| `AlertDocument.write_classification` | `FPhandler/alert_document.py` | 追加 `classifications[]` 条目，并同步顶层 `classification` / `reason` |
+| `SingleAlertClassifier` | `FPhandler/single_alert_classifier.py` | 对单条警报调用 Agent、取回结论后写入历史（供闭环与测试复用） |
+
+每次成功分类追加一条历史，字段如下：
+
+```json
+{
+  "classification": "TP",
+  "reason": "研判理由",
+  "source": "active-learning-fphandler",
+  "created_at": "2026-07-09T12:00:00+00:00",
+  "round_id": "round-20260709T120000Z",
+  "batch_id": "B0001",
+  "semantic_candidates": []
+}
+```
+
+- `created_at`：UTC ISO8601 时间戳，标识本条分类发生时刻
+- `round_id`：主动学习轮次 ID，由 `run_active_learning_loop.sh` 的 `ROUND_ID` 传入
+- `source`：区分普通管线（`fphandler`）与闭环驱动（`active-learning-fphandler`）
+- 顶层 `classification` / `reason` 始终镜像**最新**一条历史，兼容旧消费方
+
+闭环模式下 `run.py` 接受额外参数，只处理选中警报并允许覆盖已有结论：
+
+| 参数 | 含义 |
+|------|------|
+| `--alert-list PATH` | 换行分隔的警报 JSON 路径列表（来自 `feedback_alerts.txt`） |
+| `--force-reclassify` | 即使已有顶层 `classification` 也重新分类 |
+| `--round-id ID` | 写入 `classifications[].round_id` |
+| `--classification-source NAME` | 写入 `classifications[].source` |
+
+`run_active_learning_loop.sh` 为每轮设置：
+
+```bash
+FPH_ARGS=(
+  --alert-list "$out/active_learning/feedback_alerts.txt"
+  --force-reclassify
+  --round-id "$ROUND_ID"
+  --classification-source "active-learning-fphandler"
+)
+```
+
+离线烟测可将 `llm_type=Example`，无需 API Key，选中警报会写入 `UNCERTAIN` 占位结论。
+
 **只读统计**：
 
 ```bash
@@ -373,13 +488,76 @@ FPhandler 不补全、不猜测也不降级处理生产者字段。类别行为�
 
 ---
 
+## 5. 主动学习闭环
+
+### 5.1 阶段划分
+
+闭环由 `script/run_active_learning_loop.sh` 驱动；各阶段函数定义在 `script/lib/pipeline.sh`，本机与容器（`docker_name` 非空时挂载 `script/` 为 `/pipeline/`）共用同一脚本。
+
+| 阶段 | 函数 / 命令 | 输入 | 输出 |
+|------|-------------|------|------|
+| 1. 静态分析 | `run_svf_phase` | `$bc` | `$out/alerts/` |
+| 2. 图导出 | `run_active_learning_export_phase` → `svf-al-export` | `$bc` | `$out/active_learning/predict_dataset/raw/<stem>/` |
+| 3. 模型推理 | `run_active_learning_predict_phase` → `cli predict` | predict_dataset | `predictions.csv` |
+| 4. 警报排序 | `run_active_learning_rank_phase` → `cli rank-alerts` | alerts + predictions | `ranking.jsonl`，并回填各警报 `active_learning.score/rank` |
+| 5. 反馈选取 | `run_active_learning_select_feedback_phase` → `cli select-feedback` | ranking | `feedback_alerts.txt`（默认每类 1 条，`ACTIVE_LEARNING_FEEDBACK_PER_CATEGORY` 可调） |
+| 6. LLM 标注 | `run_fph_phase`（带 `FPH_ARGS`） | feedback_alerts.txt | 各选中警报 `classifications[]` 新增条目 |
+| 7. 标签汇总 | `run_active_learning_collect_feedback_phase` → `cli collect-feedback` | 已分类 alerts | `labels.jsonl` |
+
+一轮完整命令：
+
+```bash
+# 默认 ROUND_ID=round-<UTC时间戳>
+./script/run_active_learning_loop.sh
+
+# 指定轮次 ID（多轮迭代时便于对齐训练数据）
+ROUND_ID=round-002 ./script/run_active_learning_loop.sh
+```
+
+### 5.2 数据流与模块分工
+
+```text
+SVFIR + Andersen + SVFG
+  └─ svf-al-export（CI heap object 值流邻域）
+       └─ *.node.csv / *.edge.csv / idToGraph.csv / graph_index.csv
+            └─ ActiveLearning RGCN（acceptance 可用 --random-weights）
+                 └─ predictions.csv
+                      └─ rank-alerts（ActiveLearning/alerts.py）
+                           ├─ 警报证据位置 ↔ graph_index 匹配，回填 active_learning.graph_ids
+                           └─ 按 score 排序，写出 ranking.jsonl
+                                └─ select-feedback → feedback_alerts.txt
+                                     └─ FPhandler Agent（替代人工反馈）
+                                          └─ classifications[] + labels.jsonl
+```
+
+`ActiveLearning/alerts.py` 承担**警报 → 模型输入 / 排序参数**的转换与回填（将证据位置映射到 `heap:<object-id>` 图 ID、写回 score/rank）。该逻辑以模块函数实现，后续接入其他静态分析器时可在此扩展，而不改 SVFmemplus 警报 JSON 外壳。
+
+### 5.3 人工反馈 → LLM Agent
+
+原流程中 `select-feedback` 产出的警报需人工判 TP/FP。当前默认由 FPhandler 在同一容器/本机环境内完成：`--alert-list` 限定范围，`--force-reclassify` 允许同警报多轮追加历史。训练数据生成应读取 `classifications[]`（含 `created_at`、`round_id`），而非仅顶层 `classification`。
+
+多轮迭代时：用 `labels.jsonl` 与历史 `classifications[]` 重训或微调 RGCN → 去掉 `--random-weights` 加载 checkpoint → 重跑 `run_active_learning_loop.sh`；每轮排序会随模型与标签累积而调整，`round_id` 区分各轮反馈。
+
+### 5.4 验收（falconfs_ex 一轮五类）
+
+针对 `object2_falconfs/bc_linked/falconfs_ex.bc`，`defect_types=leak,dfree,uaf,uninit,bof`：
+
+1. 删除旧 `output/falconfs_ex` 后执行 `./script/run_active_learning_loop.sh`
+2. `alerts/` 下五类均有产物；`active_learning/` 下图数据、排序、反馈列表齐全
+3. `feedback_alerts.txt` 中每类至少 1 条；对应 JSON 的 `classifications[]` 含本轮 `round_id` 与 `created_at`
+4. `labels.jsonl` 非空；`llm_type=Example` 时可无 API Key 跑通全流程
+
+---
+
 ## 需求与后续
 
 **需求1（部分实现）**：通过 Saber 语义规则接口，将 LLM 发现的初始化 / API 行为建模回静态分析器。
 
 **需求2（已实现）**：五类告警均直接输出单警报 JSON；Saber 提供值流路径与条件，BOF 提供内存访问位置、参与变量和值域推理链。
 
-**需求3（预留）**：未来图模型排序模块可直接消费 `alerts/` 中稳定 `alert_id` 及类别专属 evidence；`classification` 槽位已预留。
+**需求3（已实现）**：图模型排序模块消费 `alerts/` 中稳定 `alert_id` 与 `active_learning` 字段；`classifications[]` 记录多轮 LLM/人工反馈，供重训与更精准排序。
+
+**后续**：在随机权重验收通过后，用真实 checkpoint 替换 `--random-weights`，并基于多轮 `labels.jsonl` 闭环重训。
 
 ---
 
@@ -388,13 +566,17 @@ FPhandler 不补全、不猜测也不降级处理生产者字段。类别行为�
 ```text
 openEuler分析流程/
 ├── script/
-│   ├── config.env          # 全局配置（bc / out / src / defect_types / LLM）
-│   ├── config.py           # FPhandler 配置入口
-│   ├── run_svf.sh          # Step1
-│   └── run_pipeline.sh     # Step1 + Step2
-├── SVFmemplus/             # 静态分析器源码
-├── FPhandler/              # LLM 分拣（run.py + alert_document.py）
-└── output/<run>/           # 示例输出
-    ├── alerts/             # 五类单警报 JSON（权威数据源）
-    └── fphandler/          # FPhandler 日志与语义规则
+│   ├── config.env                  # 全局配置（bc / out / src / defect_types / LLM）
+│   ├── config.py                   # FPhandler 配置入口
+│   ├── run_svf.sh                  # Step1
+│   ├── run_pipeline.sh             # Step1 + Step2
+│   ├── run_active_learning_loop.sh # 主动学习闭环（一轮）
+│   └── lib/pipeline.sh             # 各阶段函数（SVF / AL / FPhandler）
+├── SVFmemplus/                     # 静态分析器源码（含 svf-al-export）
+├── ActiveLearning/                 # 图模型推理、排序、标签汇总（cli + alerts.py）
+├── FPhandler/                      # LLM 分拣（run.py、single_alert_classifier.py）
+└── output/<run>/                   # 示例输出
+    ├── alerts/                     # 五类单警报 JSON（权威数据源）
+    ├── active_learning/            # 图数据、排序、反馈选取、labels.jsonl
+    └── fphandler/                  # FPhandler 日志与语义规则
 ```

@@ -1,6 +1,11 @@
 # 本地环境与 IDE
 .env
 .cursor/
+.agents/
+.codex/
+
+# 本地工具/实验目录
+Cangjie-GNN/
 
 # Python 缓存
 __pycache__/

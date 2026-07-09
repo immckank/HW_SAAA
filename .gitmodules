@@ -4,3 +4,6 @@
 [submodule "SVFmemplus"]
 	path = SVFmemplus
 	url = git@github.com:immckank/SVFmemplus.git
+[submodule "ActiveLearning"]
+	path = ActiveLearning
+	url = git@github.com:immckank/ActiveLearning.git
