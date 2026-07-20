@@ -1,0 +1,146 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "semantic-fact/v2",
+  "title": "Project semantic facts v2",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "scopes"],
+  "properties": {
+    "schema": {"const": "semantic-fact/v2"},
+    "scopes": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["base_api", "safe_alloc", "safe_free", "value_range", "source_filter"],
+      "properties": {
+        "base_api": {"$ref": "#/$defs/baseScope"},
+        "safe_alloc": {"$ref": "#/$defs/safeAllocScope"},
+        "safe_free": {"$ref": "#/$defs/safeFreeScope"},
+        "value_range": {"$ref": "#/$defs/rangeScope"},
+        "source_filter": {"$ref": "#/$defs/filterScope"}
+      }
+    }
+  },
+  "$defs": {
+    "location": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["file", "line"],
+      "properties": {
+        "file": {"type": "string", "minLength": 1},
+        "line": {"type": "integer", "minimum": 1}
+      }
+    },
+    "scope": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["description", "facts"],
+      "properties": {
+        "description": {"type": "string", "minLength": 1},
+        "facts": {"type": "array"}
+      }
+    },
+    "baseScope": {
+      "allOf": [
+        {"$ref": "#/$defs/scope"},
+        {
+          "properties": {
+            "facts": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["function", "kind"],
+                "properties": {
+                  "function": {"type": "string", "minLength": 1},
+                  "kind": {"enum": ["alloc", "free", "mem_transfer"]}
+                }
+              }
+            }
+          }
+        }
+      ]
+    },
+    "contextFact": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["function", "kind", "call_chain"],
+      "properties": {
+        "function": {"type": "string", "minLength": 1},
+        "kind": {"enum": ["alloc", "free"]},
+        "call_chain": {
+          "type": "array",
+          "minItems": 1,
+          "items": {"type": "string", "minLength": 1}
+        },
+        "location": {"$ref": "#/$defs/location"}
+      }
+    },
+    "safeAllocScope": {
+      "allOf": [
+        {"$ref": "#/$defs/scope"},
+        {"properties": {"facts": {"type": "array", "items": {"allOf": [
+          {"$ref": "#/$defs/contextFact"}, {"properties": {"kind": {"const": "alloc"}}}
+        ]}}}}
+      ]
+    },
+    "safeFreeScope": {
+      "allOf": [
+        {"$ref": "#/$defs/scope"},
+        {"properties": {"facts": {"type": "array", "items": {"allOf": [
+          {"$ref": "#/$defs/contextFact"}, {"properties": {"kind": {"const": "free"}}}
+        ]}}}}
+      ]
+    },
+    "rangeScope": {
+      "allOf": [
+        {"$ref": "#/$defs/scope"},
+        {
+          "properties": {
+            "facts": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["function", "kind", "variable", "lower", "upper"],
+                "properties": {
+                  "function": {"type": "string", "minLength": 1},
+                  "kind": {"const": "range"},
+                  "variable": {"type": "string", "minLength": 1},
+                  "lower": {"type": "integer"},
+                  "upper": {"type": "integer"},
+                  "location": {"$ref": "#/$defs/location"}
+                }
+              }
+            }
+          }
+        }
+      ]
+    },
+    "filterScope": {
+      "allOf": [
+        {"$ref": "#/$defs/scope"},
+        {
+          "properties": {
+            "facts": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["kind", "path", "checker"],
+                "properties": {
+                  "kind": {"const": "ignore_source"},
+                  "path": {
+                    "type": "string",
+                    "minLength": 1,
+                    "pattern": "^(?!/)(?![A-Za-z]:)(?!.*\\\\)(?!.*(?:^|/)\\.\\.(?:/|$)).+"
+                  },
+                  "checker": {"enum": ["leak", "dfree", "uaf", "bof", "uninit"]}
+                }
+              }
+            }
+          }
+        }
+      ]
+    }
+  }
+}

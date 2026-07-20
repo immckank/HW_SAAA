@@ -20,7 +20,7 @@ run_one_checker() {
   local semantic_args=()
 
   if [[ -n "${semantic_rules:-}" && -f "$semantic_rules" ]]; then
-    semantic_args=(-saber-semantic-rules="$semantic_rules")
+    semantic_args=(-semantic-facts="$semantic_rules")
   fi
 
   case "$checker" in
@@ -46,7 +46,7 @@ run_one_checker() {
       ;;
     bof)
       echo "==> bof $bc_path"
-      bof -report-dir="$out_dir" "$bc_path" 2>&1
+      bof "${semantic_args[@]}" -report-dir="$out_dir" "$bc_path" 2>&1
       ;;
     *)
       echo "error: 未知 defect_type: $checker" >&2

@@ -1,0 +1,25 @@
+{
+  "schema": "semantic-fact/v2",
+  "scopes": {
+    "base_api": {
+      "description": "Project allocation, release and memory-transfer APIs.",
+      "facts": []
+    },
+    "safe_alloc": {
+      "description": "Allocations that are fully managed in the stated calling context.",
+      "facts": []
+    },
+    "safe_free": {
+      "description": "Free operations safe for double-free and UAF analysis in context.",
+      "facts": []
+    },
+    "value_range": {
+      "description": "Authoritative BOF intervals for values static analysis cannot recover.",
+      "facts": []
+    },
+    "source_filter": {
+      "description": "Project-relative source paths a specific checker must not seed.",
+      "facts": []
+    }
+  }
+}

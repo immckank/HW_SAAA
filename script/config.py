@@ -8,13 +8,6 @@ from __future__ import annotations
 
 import os
 _VALID = frozenset({"leak", "dfree", "uaf", "uninit", "bof"})
-_CATEGORY_BY_DEFECT_TYPE = {
-    "leak": "MEMORY_LEAK",
-    "dfree": "DOUBLE_FREE",
-    "uaf": "USE_AFTER_FREE",
-    "uninit": "UNINIT_USE",
-    "bof": "BUFFER_OVERFLOW",
-}
 _DEFAULT_DEFECT_TYPES = "leak,dfree,uaf,uninit"
 
 
@@ -63,7 +56,7 @@ PROJECT_ROOT = _src
 BITCODE_PATH = _bc
 BC_STEM = _stem
 DEFECT_TYPES = _defect_types
-ALERT_CATEGORIES = [_CATEGORY_BY_DEFECT_TYPE[item] for item in _defect_types]
+ALERT_TYPES = list(_defect_types)
 
 ALERT_DIR = os.path.join(_out, "alerts")
 
@@ -73,7 +66,12 @@ PROJECT_LABEL = RUN_LOG_STEM
 PROJECT_DESC = os.environ.get("project_desc", "")
 
 RES_ROOT_PATH = os.path.join(_out, "fphandler")
-SEMANTIC_RULE_REPOSITORY = os.path.join(_out, "semantic_rules.json")
+SEMANTIC_FACT_REPOSITORY = _abs(
+    os.environ.get("semantic_rules", "").strip()
+    or os.path.join(_out, "semantic_facts.json")
+)
+# Compatibility for local FPhandler configurations not yet renamed.
+SEMANTIC_RULE_REPOSITORY = SEMANTIC_FACT_REPOSITORY
 ACTIVE_LEARNING_ROOT = os.path.abspath(
     os.environ.get(
         "active_learning_root",
@@ -92,6 +90,9 @@ ACTIVE_LEARNING_FEEDBACK_ALERTS = os.path.join(
     ACTIVE_LEARNING_OUTPUT_DIR, "feedback_alerts.txt"
 )
 ACTIVE_LEARNING_LABELS = os.path.join(ACTIVE_LEARNING_OUTPUT_DIR, "labels.jsonl")
+ACTIVE_LEARNING_CHECKPOINTS = os.path.join(
+    ACTIVE_LEARNING_OUTPUT_DIR, "checkpoints"
+)
 
 LLM_TYPE = os.environ.get("llm_type", "DeepSeek")
 SVF_ROOT = _svf_root

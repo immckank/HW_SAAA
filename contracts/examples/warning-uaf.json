@@ -1,0 +1,30 @@
+{
+  "alert_id": "sha256:6d20b9f2fb50ce0fa83a2dbb92331db09aba9fb7200180ae35c5f4fd64954e08",
+  "producer": "svfmemplus",
+  "type": "uaf",
+  "content": {
+    "path": [
+      {
+        "role": "free",
+        "location": {"file": "src/cache.c", "line": 41, "column": 2},
+        "function": "release_cache",
+        "ir": "call void @free(ptr %cache)"
+      },
+      {
+        "role": "use",
+        "location": {"file": "src/cache.c", "line": 47, "column": 9},
+        "function": "release_cache",
+        "ir": "%value = load i8, ptr %cache"
+      }
+    ],
+    "evidence": {
+      "memory_object": {"allocator": "malloc"},
+      "checker": {"report_kind": "local_ordered"}
+    }
+  },
+  "graph_ids": null,
+  "suppressed": false,
+  "classifications": null,
+  "active_learning": null,
+  "score": 0.5
+}

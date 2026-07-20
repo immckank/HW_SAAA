@@ -1,6 +1,5 @@
 #!/usr/bin/env bash
-# One active-learning feedback loop:
-#   SVFmemplus -> graph export -> random/model prediction -> ranking -> FPhandler feedback.
+# Compatibility wrapper for orchestrator active-learning.
 
 set -euo pipefail
 
@@ -8,13 +7,29 @@ PIPELINE_SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck disable=SC1091
 source "$PIPELINE_SCRIPT_DIR/lib/common.sh"
 # shellcheck disable=SC1091
-source "$PIPELINE_SCRIPT_DIR/lib/pipeline.sh"
+source "$PIPELINE_SCRIPT_DIR/lib/orchestrator_compat.sh"
 
-ROUND_ID="${ROUND_ID:-round-$(date -u +%Y%m%dT%H%M%SZ)}"
+ROUNDS=""
+FEEDBACK=fphandler
+INITIAL_MODEL=""
+NEW_BASELINE=0
+ORIGINAL_ARGS=("$@")
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --rounds) ROUNDS=$2; shift 2 ;;
+    --feedback) FEEDBACK=$2; shift 2 ;;
+    --initial-model) INITIAL_MODEL=$2; shift 2 ;;
+    --new-baseline|--force-svf) NEW_BASELINE=1; shift ;;
+    -h|--help)
+      sed -n '1,18p' "$0"
+      exit 0
+      ;;
+    *) echo "error: 未知参数: $1" >&2; exit 2 ;;
+  esac
+done
 
 if ! pipeline_in_container; then
   load_config
-  print_config_summary
   if should_use_docker; then
     pipeline_docker_vols
     pipeline_docker_env
@@ -23,27 +38,24 @@ if ! pipeline_in_container; then
       "${PIPELINE_DOCKER_ENV[@]}" \
       -w /SVFmemplus \
       "$docker_name" \
-      bash /pipeline/run_active_learning_loop.sh
+      bash /pipeline/run_active_learning_loop.sh "${ORIGINAL_ARGS[@]}"
   fi
 else
   load_config
 fi
 
-run_svf_phase
-run_active_learning_export_phase
-run_active_learning_predict_phase
-run_active_learning_rank_phase
-run_active_learning_select_feedback_phase
+ROUNDS="${ROUNDS:-${active_learning_rounds:-1}}"
+if [[ -z "$INITIAL_MODEL" ]]; then
+  INITIAL_MODEL="${active_learning_model_path:-random}"
+  [[ -n "$INITIAL_MODEL" ]] || INITIAL_MODEL=random
+fi
 
-FPH_ARGS=(
-  --alert-list "$out/active_learning/feedback_alerts.txt"
-  --force-reclassify
-  --round-id "$ROUND_ID"
-  --classification-source "active-learning-fphandler"
-)
-run_fph_phase
-run_active_learning_collect_feedback_phase
-
-echo "active learning round completed: $ROUND_ID"
-echo "ranking: $out/active_learning/ranking.jsonl"
-echo "feedback labels: $out/active_learning/labels.jsonl"
+prepare_workflow_config
+trap cleanup_workflow_config EXIT
+analyze_args=(analyze)
+[[ "$NEW_BASELINE" -eq 1 ]] && analyze_args+=(--new-baseline)
+run_orchestrator "${analyze_args[@]}"
+run_orchestrator active-learning \
+  --rounds "$ROUNDS" \
+  --feedback "$FEEDBACK" \
+  --initial-model "$INITIAL_MODEL"

@@ -15,6 +15,7 @@ __pycache__/
 script/config.env
 script/config.env.*
 !script/config.env.example
+workflow.ini
 
 # 分析产物：保留 output/ 空壳，忽略实际产出
 output/*

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# 统计 alerts 目录下各 classification 数量，并列出 TP / UN 警报文件路径。
+# 统计 alerts 目录下各 classification 数量、语义压缩和展示分值。
 #
 # 用法:
 #   ./script/stats_alerts.sh
@@ -54,7 +54,9 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-load_config
+if [[ -z "$ALERTS_DIR" ]]; then
+  load_config
+fi
 
 resolve_alerts_dir() {
   local input="${1:-$out/alerts}"
@@ -74,7 +76,7 @@ resolve_alerts_dir() {
     resolved="$resolved/alerts"
   elif [[ "$base" != "alerts" ]]; then
     echo "error: 未找到 alerts 子目录: $resolved/alerts" >&2
-    echo "hint: 目录结构应为 <out>/alerts/<category>/*.json" >&2
+    echo "hint: 目录结构应为 <out>/alerts/<type>/*.json" >&2
     return 1
   fi
 
@@ -125,17 +127,18 @@ def count_bucket() -> Counter:
 paths = sorted(ROOT.glob("*/*.json"))
 if not paths:
     print(f"error: 未找到警报 JSON: {ROOT}/*/*.json", file=sys.stderr)
-    print("hint: 路径应形如 <out>/alerts/<category>/*.json", file=sys.stderr)
+    print("hint: 路径应形如 <out>/alerts/<type>/*.json", file=sys.stderr)
     raise SystemExit(1)
 
 overall = count_bucket()
-by_category: dict[str, Counter] = defaultdict(count_bucket)
+by_type: dict[str, Counter] = defaultdict(count_bucket)
 tp_paths: list[str] = []
 un_paths: list[str] = []
 invalid = 0
+suppressed_paths: list[str] = []
+score_total = 0.0
 
 for path in paths:
-    category = path.parent.name
     try:
         with path.open(encoding="utf-8") as handle:
             data = json.load(handle)
@@ -144,9 +147,26 @@ for path in paths:
         print(f"error: 无法读取 {path}: {error}", file=sys.stderr)
         continue
 
-    label = normalize_classification(data.get("classification"))
+    warning_type = str(data.get("type") or "")
+    if warning_type not in {"leak", "dfree", "uaf", "uninit", "bof"}:
+        invalid += 1
+        print(f"error: 非法 Warning type: {path}: {warning_type!r}", file=sys.stderr)
+        continue
+    if data.get("suppressed") is True:
+        suppressed_paths.append(str(path.resolve()))
+
+    history = data.get("classifications")
+    latest = history[-1] if isinstance(history, list) and history else None
+    raw = latest.get("classification") if isinstance(latest, dict) else None
+    label = normalize_classification(raw)
     overall[label] += 1
-    by_category[category][label] += 1
+    by_type[warning_type][label] += 1
+    try:
+        score_total += float(data["score"])
+    except (KeyError, TypeError, ValueError):
+        invalid += 1
+        print(f"error: 非法 Warning score: {path}", file=sys.stderr)
+        continue
 
     if label == "TP":
         tp_paths.append(str(path.resolve()))
@@ -167,13 +187,16 @@ def print_counter(title: str, counter: Counter) -> None:
 print("=== Alert Classification Stats ===")
 print(f"root:  {ROOT.resolve()}")
 print(f"total: {len(paths)}")
+print(f"active: {len(paths) - len(suppressed_paths)}")
+print(f"semantic_suppressed: {len(suppressed_paths)}")
+print(f"average_score: {score_total / len(paths):.6f}")
 print()
 print_counter("Overall:", overall)
 print()
-print("By category:")
-for category in sorted(by_category):
-    print(f"  [{category}]")
-    counter = by_category[category]
+print("By type:")
+for warning_type in sorted(by_type):
+    print(f"  [{warning_type}]")
+    counter = by_type[warning_type]
     for label in LABELS:
         print(f"    {label}: {counter[label]}")
     extras = sorted(key for key in counter if key not in LABELS and counter[key])
@@ -186,5 +209,9 @@ for path in tp_paths:
 print()
 print(f"=== UN alerts ({len(un_paths)}) ===")
 for path in un_paths:
+    print(path)
+print()
+print(f"=== Semantic-suppressed alerts ({len(suppressed_paths)}) ===")
+for path in suppressed_paths:
     print(path)
 PY

@@ -1,0 +1,276 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "warning",
+  "title": "Display warning",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "alert_id",
+    "producer",
+    "type",
+    "content",
+    "graph_ids",
+    "suppressed",
+    "classifications",
+    "active_learning",
+    "score"
+  ],
+  "properties": {
+    "alert_id": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+    "producer": {"type": "string", "minLength": 1},
+    "type": {"enum": ["leak", "dfree", "uaf", "uninit", "bof"]},
+    "content": {"type": "object", "minProperties": 1},
+    "graph_ids": {
+      "oneOf": [
+        {"type": "null"},
+        {"type": "array", "uniqueItems": true, "items": {"type": "string", "minLength": 1}}
+      ]
+    },
+    "suppressed": {"type": "boolean"},
+    "classifications": {
+      "oneOf": [
+        {"type": "null"},
+        {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/classification"}}
+      ]
+    },
+    "active_learning": {
+      "oneOf": [
+        {"type": "null"},
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["weight", "model"],
+          "properties": {
+            "weight": {"type": "number", "minimum": 0, "maximum": 1},
+            "model": {"type": "string", "minLength": 1}
+          }
+        }
+      ]
+    },
+    "score": {"type": "number", "minimum": 0, "maximum": 1}
+  },
+  "allOf": [
+    {
+      "if": {"properties": {"type": {"const": "leak"}}},
+      "then": {"properties": {"content": {"$ref": "#/$defs/leakContent"}}}
+    },
+    {
+      "if": {"properties": {"type": {"enum": ["dfree", "uaf", "uninit"]}}},
+      "then": {"properties": {"content": {"$ref": "#/$defs/pathContent"}}}
+    },
+    {
+      "if": {"properties": {"type": {"const": "bof"}}},
+      "then": {"properties": {"content": {"$ref": "#/$defs/bofContent"}}}
+    }
+  ],
+  "$defs": {
+    "location": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["file", "line"],
+      "properties": {
+        "file": {"type": "string", "minLength": 1},
+        "line": {"type": "integer", "minimum": 1},
+        "column": {"type": "integer", "minimum": 0}
+      }
+    },
+    "sourceContext": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["start_line", "end_line", "code"],
+      "properties": {
+        "start_line": {"type": "integer", "minimum": 1},
+        "end_line": {"type": "integer", "minimum": 1},
+        "code": {"type": "string"}
+      }
+    },
+    "pathNode": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["role", "location"],
+      "properties": {
+        "role": {"type": "string", "minLength": 1},
+        "location": {"$ref": "#/$defs/location"},
+        "function": {"type": "string", "minLength": 1},
+        "ir": {"type": "string", "minLength": 1},
+        "condition": {"type": "boolean"},
+        "source_context": {"$ref": "#/$defs/sourceContext"}
+      }
+    },
+    "memoryObject": {
+      "type": "object",
+      "additionalProperties": false,
+      "minProperties": 1,
+      "properties": {
+        "type": {"type": "string", "minLength": 1},
+        "variable": {"type": "string", "minLength": 1},
+        "allocator": {"type": "string", "minLength": 1},
+        "descriptor": {"type": "string", "minLength": 1},
+        "zeroing": {"type": "boolean"}
+      }
+    },
+    "saberEvidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["checker"],
+      "properties": {
+        "memory_object": {"$ref": "#/$defs/memoryObject"},
+        "checker": {
+          "type": "object",
+          "additionalProperties": false,
+          "minProperties": 1,
+          "properties": {
+            "report_kind": {"type": "string", "minLength": 1},
+            "leak_kind": {"type": "string", "minLength": 1},
+            "source_kind": {"type": "string", "minLength": 1}
+          }
+        }
+      }
+    },
+    "pathContent": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "evidence"],
+      "properties": {
+        "path": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/pathNode"}},
+        "evidence": {"$ref": "#/$defs/saberEvidence"}
+      }
+    },
+    "leakContent": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["allocation", "paths", "leak_condition", "evidence"],
+      "properties": {
+        "allocation": {"$ref": "#/$defs/pathNode"},
+        "paths": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["condition", "path"],
+            "properties": {
+              "condition": {"type": "object"},
+              "path": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/pathNode"}}
+            }
+          }
+        },
+        "leak_condition": {"type": "object", "minProperties": 1},
+        "evidence": {"$ref": "#/$defs/saberEvidence"}
+      }
+    },
+    "range": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["lower", "upper", "is_top", "is_bottom"],
+      "properties": {
+        "lower": {"type": "string"},
+        "upper": {"type": "string"},
+        "is_top": {"type": "boolean"},
+        "is_bottom": {"type": "boolean"}
+      }
+    },
+    "bofContent": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["access", "buffer", "variables", "range_analysis", "evidence"],
+      "properties": {
+        "access": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "base", "ir", "index_or_length_expression", "range"],
+          "properties": {
+            "location": {"$ref": "#/$defs/location"},
+            "function": {"type": "string", "minLength": 1},
+            "kind": {"type": "string", "minLength": 1},
+            "base": {"type": "string", "minLength": 1},
+            "ir": {"type": "string", "minLength": 1},
+            "index_or_length_expression": {"type": "string", "minLength": 1},
+            "range": {"$ref": "#/$defs/range"},
+            "source_context": {"type": "string"}
+          }
+        },
+        "buffer": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["capacity", "is_heap", "domain"],
+          "properties": {
+            "capacity": {"$ref": "#/$defs/range"},
+            "is_heap": {"type": "boolean"},
+            "domain": {"type": "string", "minLength": 1}
+          }
+        },
+        "variables": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["expression", "initial_range", "final_range"],
+            "properties": {
+              "name": {"type": "string", "minLength": 1},
+              "semantic_key": {"type": "string", "minLength": 1},
+              "semantic_location": {"$ref": "#/$defs/location"},
+              "expression": {"type": "string", "minLength": 1},
+              "initial_range": {"$ref": "#/$defs/range"},
+              "final_range": {"$ref": "#/$defs/range"}
+            }
+          }
+        },
+        "range_analysis": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["operation", "inputs", "constraint", "output_range", "explanation"],
+            "properties": {
+              "operation": {"type": "string", "minLength": 1},
+              "inputs": {"type": "array", "items": {"type": "object"}},
+              "constraint": {"type": "string"},
+              "output_range": {"$ref": "#/$defs/range"},
+              "explanation": {"type": "string", "minLength": 1}
+            }
+          }
+        },
+        "evidence": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["checker"],
+          "properties": {
+            "checker": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["verdict", "analysis_degraded"],
+              "properties": {
+                "verdict": {"type": "string", "minLength": 1},
+                "analysis_degraded": {"type": "boolean"}
+              }
+            }
+          }
+        }
+      }
+    },
+    "semanticFact": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["scope", "fact"],
+      "properties": {
+        "scope": {"enum": ["base_api", "safe_alloc", "safe_free", "value_range", "source_filter"]},
+        "fact": {"type": "object", "minProperties": 1}
+      }
+    },
+    "classification": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["classification", "reason", "source", "created_at", "round_id", "batch_id", "semantic_candidates"],
+      "properties": {
+        "classification": {"enum": ["TP", "FP", "UNCERTAIN"]},
+        "reason": {"type": "string"},
+        "source": {"type": "string", "minLength": 1},
+        "created_at": {"type": ["string", "null"]},
+        "round_id": {"type": ["string", "null"]},
+        "batch_id": {"type": ["string", "null"]},
+        "semantic_candidates": {"type": "array", "items": {"$ref": "#/$defs/semanticFact"}}
+      }
+    }
+  }
+}
