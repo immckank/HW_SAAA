@@ -11,6 +11,7 @@
 3. ActiveLearning 仅在用户显式调用时执行，为活动 Warning 回写权重。
 4. `orchestrator` Python 包管理阶段、文件一致性和外部进程，Shell 仅保留兼容入口。
 5. 不引入数据库、任务队列、HTTP API、用户权限或项目注册表。
+6. `local_ui` 提供绑定单个 INI 的 loopback HTML 页面，不承担远程平台职责。
 
 ## 2. 仓库职责
 
@@ -21,6 +22,7 @@
 | `FPhandler/` | Agent 告警研判、分类历史追加和语义候选生成 |
 | `ActiveLearning/` | 图构建、模型预测、反馈选择和训练 |
 | `orchestrator/` | 配置、基线、文件事务、阶段编排与 CLI |
+| `local_ui/` | 绑定单个 INI 的 loopback HTML 告警表格与操作界面 |
 | `script/` | 旧 `config.env` 和容器启动的兼容包装 |
 
 业务依赖方向保持为：
@@ -140,6 +142,8 @@ python -m orchestrator --config workflow.ini triage \
 python -m orchestrator --config workflow.ini active-learning \
   --rounds N --feedback none|fphandler \
   --initial-model random|latest|PATH
+
+python3 -m local_ui --config workflow.ini [--port 8765]
 ```
 
 - Result 是可 JSON 序列化的 dataclass，包含 operation ID、数量、跳过/失败原因、checkpoint 和重分析结果。
@@ -187,6 +191,7 @@ python -m orchestrator --config workflow.ini active-learning \
 - FPhandler 两种模式、候选去重、无新 fact 不重跑、部分结束后单次重分析。
 - ActiveLearning 无反馈单轮、有反馈多轮、压缩警报跳过、每轮 checkpoint 和最终模型哈希。
 - service Result、progress 回调、CLI 参数和退出码。
+- 本地页面的告警摘要、score 正倒序、类别筛选、三类 Request 映射、单操作限制和 HTTP 端点。
 
 ## 9. 兼容与迁移
 
@@ -195,14 +200,17 @@ python -m orchestrator --config workflow.ini active-learning \
 - 第一次在旧产物目录使用新编排器时需 `--new-baseline`，旧 Warning 外壳不做隐式迁移。
 - Shell 不再根据产物存在性跳过阶段，不生成 `.changed` 标记，不维护轮次或警报对账状态。
 
-## 10. 远期可视化与平台化（非当前实施范围）
+## 10. 本地单页界面
 
-首选演进是简单本地界面：
+- 启动时绑定一个 `workflow.ini`，运行期不切换或编辑配置。
+- 只监听 `127.0.0.1`，无图形环境机器通过 SSH 端口转发访问。
+- 表格显示 Warning 的九个顶层字段；`content` 只显示类型化位置摘要，`graph_ids` 只显示关联状态和数量。
+- 默认按最终 score 降序，可切换升序并按 Warning type 筛选。
+- 三组参数和按钮直接调用 analyze、triage 和 active learning service；triage 由用户按行输入 alert ID。
+- 同时只运行一个操作，页面显示 progress event、最终 Result 或错误，结束后刷新告警。
+- 实现只使用 Python 标准库与原生 HTML/CSS/JavaScript，内部 HTTP 端点不是对外业务 API。
 
-- 选择或编辑 `workflow.ini`。
-- 通过按钮直接调用三个 Python service。
-- 使用 progress callback 显示阶段和日志。
-- 读取 `alerts/`、`semantic_facts.json`、图 manifest 和模型 manifest 进行展示与编辑。
+## 11. 远期平台化（非当前实施范围）
 
 只有出现以下需求时才启动原平台化思路：
 

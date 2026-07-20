@@ -1,5 +1,5 @@
 # Relative paths are resolved from this file's directory.
 [project]
-bitcode_path = object2_falconfs/bc_linked/single-target/xxx.bc
+bitcode_path = object2_falconfs/bc_linked/falconfs_ex.bc
 source_dir = object2_falconfs/source/FalconFS
 artifact_dir = output/falconfs_ex

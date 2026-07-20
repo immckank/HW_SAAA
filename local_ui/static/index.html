@@ -1,0 +1,158 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>告警分析工作流</title>
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+  <header class="page-header">
+    <div>
+      <p class="eyebrow">openEuler · Single Project</p>
+      <h1>告警分析工作流</h1>
+      <p class="subtitle">绑定一个 workflow.ini，查看告警并调用 orchestrator。</p>
+    </div>
+    <span id="operation-badge" class="badge badge-idle">空闲</span>
+  </header>
+
+  <main>
+    <section class="card project-card" aria-labelledby="project-title">
+      <div class="section-heading">
+        <h2 id="project-title">当前项目</h2>
+      </div>
+      <dl id="project-summary" class="project-grid">
+        <div><dt>配置</dt><dd id="project-config">—</dd></div>
+        <div><dt>Bitcode</dt><dd id="project-bitcode">—</dd></div>
+        <div><dt>源码目录</dt><dd id="project-source">—</dd></div>
+        <div><dt>产物目录</dt><dd id="project-artifact">—</dd></div>
+      </dl>
+    </section>
+
+    <section class="operations" aria-label="工作流操作">
+      <form id="analyze-form" class="card operation-card">
+        <div class="operation-title">
+          <span class="step">01</span>
+          <div><h2>Analyze</h2><p>运行 SVF 并对账告警</p></div>
+        </div>
+        <fieldset>
+          <legend>Checkers</legend>
+          <div class="checkers">
+            <label><input type="checkbox" name="checker" value="leak" checked> leak</label>
+            <label><input type="checkbox" name="checker" value="dfree" checked> dfree</label>
+            <label><input type="checkbox" name="checker" value="uaf" checked> uaf</label>
+            <label><input type="checkbox" name="checker" value="uninit" checked> uninit</label>
+            <label><input type="checkbox" name="checker" value="bof" checked> bof</label>
+          </div>
+        </fieldset>
+        <label class="toggle-line">
+          <input id="new-baseline" type="checkbox">
+          <span>建立新基线</span>
+        </label>
+        <button data-operation type="submit" class="primary">执行 Analyze</button>
+      </form>
+
+      <form id="triage-form" class="card operation-card">
+        <div class="operation-title">
+          <span class="step">02</span>
+          <div><h2>Triage</h2><p>研判手工输入的告警 ID</p></div>
+        </div>
+        <label>Alert ID（每行一个）
+          <textarea id="triage-alert-ids" rows="4" spellcheck="false" placeholder="sha256:..."></textarea>
+        </label>
+        <div class="form-row">
+          <label>模式
+            <select id="triage-mode">
+              <option value="classify">classify</option>
+              <option value="expand-semantics">expand-semantics</option>
+            </select>
+          </label>
+          <label>Round ID（可选）
+            <input id="triage-round-id" type="text">
+          </label>
+        </div>
+        <label>Classification source
+          <input id="triage-source" type="text" value="fphandler" required>
+        </label>
+        <button data-operation type="submit" class="primary">执行 Triage</button>
+      </form>
+
+      <form id="active-form" class="card operation-card">
+        <div class="operation-title">
+          <span class="step">03</span>
+          <div><h2>Active Learning</h2><p>预测、反馈与训练</p></div>
+        </div>
+        <div class="form-row">
+          <label>Rounds
+            <input id="active-rounds" type="number" value="1" min="1" step="1" required>
+          </label>
+          <label>Feedback
+            <select id="active-feedback">
+              <option value="none">none</option>
+              <option value="fphandler">fphandler</option>
+            </select>
+          </label>
+        </div>
+        <label>Initial model
+          <input id="active-model" type="text" value="random" placeholder="random、latest 或 checkpoint 路径" required>
+        </label>
+        <button data-operation type="submit" class="primary">执行 Active Learning</button>
+      </form>
+    </section>
+
+    <section class="card status-card" aria-labelledby="status-title">
+      <div class="section-heading">
+        <div><h2 id="status-title">运行状态</h2><p id="status-meta">尚未执行操作</p></div>
+      </div>
+      <div id="message" class="message" hidden></div>
+      <ol id="progress-list" class="progress-list"></ol>
+      <pre id="operation-result" class="result" hidden></pre>
+    </section>
+
+    <section class="card alerts-card" aria-labelledby="alerts-title">
+      <div class="section-heading alerts-heading">
+        <div><h2 id="alerts-title">全部告警</h2><p id="alert-count">正在读取…</p></div>
+        <div class="table-controls">
+          <label>类别
+            <select id="type-filter">
+              <option value="all">全部</option>
+              <option value="leak">leak</option>
+              <option value="dfree">dfree</option>
+              <option value="uaf">uaf</option>
+              <option value="uninit">uninit</option>
+              <option value="bof">bof</option>
+            </select>
+          </label>
+          <label>Score 排序
+            <select id="score-order">
+              <option value="desc">降序</option>
+              <option value="asc">升序</option>
+            </select>
+          </label>
+          <button id="refresh-alerts" type="button" class="secondary">刷新</button>
+        </div>
+      </div>
+      <div class="table-shell">
+        <table>
+          <thead>
+            <tr>
+              <th>alert_id</th>
+              <th>producer</th>
+              <th>type</th>
+              <th>content</th>
+              <th>graph_ids</th>
+              <th>suppressed</th>
+              <th>classifications</th>
+              <th>active_learning</th>
+              <th>score</th>
+            </tr>
+          </thead>
+          <tbody id="alerts-body"></tbody>
+        </table>
+      </div>
+    </section>
+  </main>
+
+  <script src="/app.js" defer></script>
+</body>
+</html>
