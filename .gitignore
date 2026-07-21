@@ -11,11 +11,12 @@ Cangjie-GNN/
 __pycache__/
 *.pyc
 
-# 本地运行配置（含 API Key，仅保留 config.env.example）
+# 本地运行配置（含 API Key，仅保留 *.example）
 script/config.env
 script/config.env.*
 !script/config.env.example
 workflow.ini
+runtime.env
 
 # 分析产物：保留 output/ 空壳，忽略实际产出
 output/*

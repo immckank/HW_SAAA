@@ -3,9 +3,11 @@ from __future__ import annotations
 
 import json
 import os
+import random
 import shutil
 import sys
 import uuid
+from collections import defaultdict
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -602,19 +604,164 @@ def _prepare_prediction(
     return alert_stage, ranking, weighted
 
 
+def _env_int(name: str, default: int, *aliases: str) -> int:
+    for key in (name, *aliases):
+        raw = os.environ.get(key)
+        if raw is None or not str(raw).strip():
+            continue
+        try:
+            return int(str(raw).strip())
+        except ValueError as error:
+            raise ValueError(f"{key} must be an integer") from error
+    return default
+
+
+def _env_flag(name: str, default: bool, *aliases: str) -> bool:
+    for key in (name, *aliases):
+        raw = os.environ.get(key)
+        if raw is None or not str(raw).strip():
+            continue
+        value = str(raw).strip().lower()
+        if value in {"1", "true", "yes", "on"}:
+            return True
+        if value in {"0", "false", "no", "off"}:
+            return False
+        raise ValueError(f"{key} must be a boolean-like value")
+    return default
+
+
+def _env_choice(name: str, default: str, allowed: set[str], *aliases: str) -> str:
+    for key in (name, *aliases):
+        raw = os.environ.get(key)
+        if raw is None or not str(raw).strip():
+            continue
+        value = str(raw).strip()
+        if value not in allowed:
+            raise ValueError(f"{key} must be one of: {', '.join(sorted(allowed))}")
+        return value
+    return default
+
+
+def _feedback_is_classified(row: dict[str, Any]) -> bool:
+    path = Path(str(row.get("path") or ""))
+    if not path.is_file():
+        return False
+    try:
+        document = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError, TypeError):
+        return False
+    classifications = document.get("classifications")
+    if not isinstance(classifications, list) or not classifications:
+        return False
+    latest = classifications[-1]
+    return isinstance(latest, dict) and bool(latest.get("classification"))
+
+
+def _sample_feedback_rows(
+    rows: list[dict[str, Any]], sample_size: int, seed: int, strategy: str
+) -> list[dict[str, Any]]:
+    rng = random.Random(seed)
+    if strategy == "plain":
+        shuffled = list(rows)
+        rng.shuffle(shuffled)
+        return shuffled[:sample_size]
+    buckets: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for row in rows:
+        buckets[str(row.get("type") or "unknown")].append(row)
+    for bucket in buckets.values():
+        rng.shuffle(bucket)
+    selected: list[dict[str, Any]] = []
+    types = sorted(buckets)
+    while len(selected) < sample_size and types:
+        remaining: list[str] = []
+        for warning_type in types:
+            bucket = buckets[warning_type]
+            if bucket:
+                selected.append(bucket.pop())
+            if bucket:
+                remaining.append(warning_type)
+            if len(selected) >= sample_size:
+                break
+        types = remaining
+    return selected
+
+
 def _select_feedback_ids(ranking: Path, excluded: set[str]) -> list[str]:
-    rows = []
+    top_k = _env_int(
+        "ACTIVE_LEARNING_FEEDBACK_TOP_K",
+        10,
+        "active_learning_feedback_top_k",
+    )
+    bottom_k = _env_int(
+        "ACTIVE_LEARNING_FEEDBACK_BOTTOM_K",
+        10,
+        "active_learning_feedback_bottom_k",
+    )
+    random_k = _env_int(
+        "ACTIVE_LEARNING_FEEDBACK_RANDOM_K",
+        0,
+        "active_learning_feedback_random_k",
+    )
+    random_seed = _env_int(
+        "ACTIVE_LEARNING_FEEDBACK_RANDOM_SEED",
+        42,
+        "active_learning_feedback_random_seed",
+    )
+    skip_classified = _env_flag(
+        "ACTIVE_LEARNING_FEEDBACK_SKIP_CLASSIFIED",
+        False,
+        "active_learning_feedback_skip_classified",
+    )
+    random_strategy = _env_choice(
+        "ACTIVE_LEARNING_FEEDBACK_RANDOM_STRATEGY",
+        "plain",
+        {"plain", "type"},
+        "active_learning_feedback_random_strategy",
+    )
+    if top_k < 0 or bottom_k < 0 or random_k < 0:
+        raise ValueError("active learning feedback k values must be >= 0")
+
+    rows: list[dict[str, Any]] = []
     with ranking.open(encoding="utf-8") as stream:
         for line in stream:
-            if line.strip():
-                row = json.loads(line)
-                if row["alert_id"] not in excluded:
-                    rows.append(row)
-    rows.sort(key=lambda row: (-float(row["weight"]), str(row["type"]), row["alert_id"]))
-    selected = rows[:10]
-    if len(rows) > 10:
-        selected.extend(rows[-10:])
-    return list(dict.fromkeys(str(row["alert_id"]) for row in selected))
+            if not line.strip():
+                continue
+            row = json.loads(line)
+            alert_id = str(row["alert_id"])
+            if alert_id in excluded:
+                continue
+            classified = _feedback_is_classified(row)
+            if skip_classified and classified:
+                continue
+            row = dict(row)
+            row["is_classified"] = classified
+            rows.append(row)
+    rows.sort(key=lambda item: (-float(item["weight"]), str(item["type"]), item["alert_id"]))
+
+    selected: list[str] = []
+    seen: set[str] = set()
+
+    def add(row: dict[str, Any]) -> None:
+        alert_id = str(row["alert_id"])
+        if alert_id in seen:
+            return
+        seen.add(alert_id)
+        selected.append(alert_id)
+
+    for row in rows[:top_k]:
+        add(row)
+    if bottom_k:
+        for row in rows[-bottom_k:]:
+            add(row)
+    if random_k:
+        candidates = [
+            row
+            for row in rows
+            if str(row["alert_id"]) not in seen and not bool(row.get("is_classified"))
+        ]
+        for row in _sample_feedback_rows(candidates, random_k, random_seed, random_strategy):
+            add(row)
+    return selected
 
 
 def run_active_learning(

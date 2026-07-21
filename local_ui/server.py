@@ -166,17 +166,22 @@ def make_server(
     config_path: str | Path,
     port: int = 8765,
     *,
+    host: str = "127.0.0.1",
     services=None,
 ) -> LocalUIServer:
     if isinstance(port, bool) or not isinstance(port, int) or not 1 <= port <= 65535:
         raise ValueError("port must be between 1 and 65535")
-    return LocalUIServer(("127.0.0.1", port), LocalUIApp(config_path, services=services))
+    if not isinstance(host, str) or not host.strip():
+        raise ValueError("host must be a non-empty string")
+    bind_host = host.strip()
+    return LocalUIServer((bind_host, port), LocalUIApp(config_path, services=services))
 
 
-def serve(config_path: str | Path, port: int = 8765) -> None:
-    server = make_server(config_path, port)
-    actual_port = int(server.server_address[1])
-    print(f"Local workflow UI: http://127.0.0.1:{actual_port}")
+def serve(config_path: str | Path, port: int = 8765, *, host: str = "127.0.0.1") -> None:
+    server = make_server(config_path, port, host=host)
+    actual_host, actual_port = server.server_address[0], int(server.server_address[1])
+    display_host = "127.0.0.1" if actual_host in ("0.0.0.0", "::") else actual_host
+    print(f"Local workflow UI: http://{display_host}:{actual_port}")
     print(
         "Remote access: "
         f"ssh -L {actual_port}:127.0.0.1:{actual_port} USER@HOST",

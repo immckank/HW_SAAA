@@ -202,7 +202,9 @@ class OrchestratorTest(unittest.TestCase):
             "[project]\n"
             f"bitcode_path = {bitcode / 'program.bc'}\n"
             f"source_dir = {source}\n"
-            f"artifact_dir = {artifacts}\n",
+            f"artifact_dir = {artifacts}\n"
+            "project_label = program\n"
+            "project_desc =\n",
             encoding="utf-8",
         )
         return config
@@ -231,11 +233,15 @@ class OrchestratorTest(unittest.TestCase):
                 "[project]\n"
                 "bitcode_path = program.bc\n"
                 "source_dir = source\n"
-                "artifact_dir = artifacts\n",
+                "artifact_dir = artifacts\n"
+                "project_label = program\n"
+                "project_desc =\n",
                 encoding="utf-8",
             )
             loaded = WorkflowConfig.load(config)
             self.assertEqual((root / "program.bc").resolve(), loaded.bitcode_path)
+            self.assertEqual("program", loaded.project_label)
+            self.assertEqual("", loaded.project_desc)
             self.assertTrue((root / "artifacts").is_dir())
             config.write_text(
                 config.read_text(encoding="utf-8") + "database = warnings.db\n",

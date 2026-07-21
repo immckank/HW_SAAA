@@ -40,4 +40,6 @@ class BoundProject:
             "bitcode_path": str(self.config.bitcode_path),
             "source_dir": str(self.config.source_dir),
             "artifact_dir": str(self.config.artifact_dir),
+            "project_label": self.config.project_label,
+            "project_desc": self.config.project_desc,
         }

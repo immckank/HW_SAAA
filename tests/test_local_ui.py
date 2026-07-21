@@ -44,7 +44,9 @@ def _project(root: Path) -> Path:
         "[project]\n"
         f"bitcode_path = {bitcode}\n"
         f"source_dir = {source}\n"
-        f"artifact_dir = {artifacts}\n",
+        f"artifact_dir = {artifacts}\n"
+        "project_label = test-project\n"
+        "project_desc = test description\n",
         encoding="utf-8",
     )
     return config

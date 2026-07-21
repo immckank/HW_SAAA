@@ -6,7 +6,12 @@ import sys
 def build_parser():
     parser = argparse.ArgumentParser(description="Local HTML UI for one workflow.ini")
     parser.add_argument("--config", required=True, help="workflow.ini to bind at startup")
-    parser.add_argument("--port", type=int, default=8765, help="loopback port (default: 8765)")
+    parser.add_argument(
+        "--host",
+        default="127.0.0.1",
+        help="bind address (default: 127.0.0.1; use 0.0.0.0 inside Docker)",
+    )
+    parser.add_argument("--port", type=int, default=8765, help="listen port (default: 8765)")
     return parser
 
 
@@ -18,7 +23,7 @@ def main():
     try:
         from .server import serve
 
-        serve(args.config, args.port)
+        serve(args.config, args.port, host=args.host)
     except ValueError as error:
         print(f"error: {error}", file=sys.stderr)
         return 2

@@ -3,3 +3,5 @@
 bitcode_path = object2_falconfs/bc_linked/falconfs_ex.bc
 source_dir = object2_falconfs/source/FalconFS
 artifact_dir = output/falconfs_ex
+project_label = falconfs_ex
+project_desc =

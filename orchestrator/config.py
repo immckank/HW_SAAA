@@ -1,4 +1,4 @@
-"""Strict three-entry workflow configuration."""
+"""Strict project workflow configuration."""
 from __future__ import annotations
 
 import configparser
@@ -6,7 +6,9 @@ from dataclasses import dataclass
 from pathlib import Path
 
 
-PROJECT_KEYS = frozenset({"bitcode_path", "source_dir", "artifact_dir"})
+PROJECT_KEYS = frozenset(
+    {"bitcode_path", "source_dir", "artifact_dir", "project_label", "project_desc"}
+)
 
 
 @dataclass(frozen=True)
@@ -15,6 +17,8 @@ class WorkflowConfig:
     bitcode_path: Path
     source_dir: Path
     artifact_dir: Path
+    project_label: str
+    project_desc: str
 
     @classmethod
     def load(cls, path: str | Path = "workflow.ini") -> "WorkflowConfig":
@@ -66,9 +70,21 @@ class WorkflowConfig:
         bitcode_path = bitcode_path.resolve()
         if not bitcode_path.is_file() or bitcode_path.suffix != ".bc":
             raise ValueError(f"bitcode_path must reference one .bc file: {bitcode_path}")
+
+        project_label = section.get("project_label", "").strip()
+        if not project_label:
+            raise ValueError("project_label must not be empty")
+        # project_desc may be intentionally blank.
+        project_desc = section.get("project_desc", "")
+        if project_desc is None:
+            project_desc = ""
+        project_desc = project_desc.strip()
+
         return cls(
             path=config_path,
             bitcode_path=bitcode_path,
             source_dir=source_dir,
             artifact_dir=artifact_dir,
+            project_label=project_label,
+            project_desc=project_desc,
         )
