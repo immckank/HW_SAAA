@@ -150,6 +150,8 @@ ACTIVE_LEARNING_FEEDBACK_SKIP_CLASSIFIED=0
 | `--dockerfile` | 默认 `dockerfile.svfmemplus` |
 | `--build` | docker 启动前强制构建镜像 |
 | `--skip-preflight` | 跳过 Python 依赖与 SVF 二进制预检 |
+| `--gpus SPEC` | 仅 docker：传给 `docker --gpus`，默认 `device=0`（一卡 GPU0）；可用 `device=1` / `all` 等 |
+| `--no-gpu` | 仅 docker：不挂载 GPU |
 
 浏览器打开 `http://127.0.0.1:8765`。无图形界面时用 SSH 转发：
 

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import csv
 import json
+import os
 import sys
 import tempfile
 import unittest
@@ -43,6 +44,7 @@ class FakeRunner:
     def __init__(self, outputs: list[list[dict[str, Any]]]):
         self.outputs = list(outputs)
         self.graph_ids: list[str] = []
+        self.last_train_args: list[str] | None = None
 
     def analyzer_hash(self, checkers: tuple[str, ...]) -> str:
         return "sha256:fake-" + "-".join(checkers)
@@ -165,6 +167,7 @@ class FakeRunner:
             output.parent.mkdir(parents=True, exist_ok=True)
             output.write_text('{"graph_id":"g:test","classification":"TP"}\n')
         elif command == "train":
+            self.last_train_args = list(arguments)
             checkpoint_dir = self._argument(arguments, "--checkpoint-dir")
             round_id = arguments[arguments.index("--round-id") + 1]
             checkpoint_dir.mkdir(parents=True, exist_ok=True)
@@ -445,6 +448,48 @@ class OrchestratorTest(unittest.TestCase):
             self.assertEqual(2, latest["round"])
             for checkpoint in result.checkpoints:
                 self.assertTrue(Path(checkpoint).is_file())
+
+    def test_active_learning_train_receives_runtime_env_args(self) -> None:
+        env_keys = (
+            "ACTIVE_LEARNING_TRAIN_BATCH_SIZE",
+            "ACTIVE_LEARNING_TRAIN_MAX_UNLABELED",
+            "ACTIVE_LEARNING_TRAIN_MAX_BATCH_NODES",
+            "ACTIVE_LEARNING_TRAIN_MAX_BATCH_EDGES",
+        )
+        previous = {key: os.environ.get(key) for key in env_keys}
+        try:
+            os.environ["ACTIVE_LEARNING_TRAIN_BATCH_SIZE"] = "1"
+            os.environ["ACTIVE_LEARNING_TRAIN_MAX_UNLABELED"] = "64"
+            os.environ["ACTIVE_LEARNING_TRAIN_MAX_BATCH_NODES"] = "50000"
+            os.environ["ACTIVE_LEARNING_TRAIN_MAX_BATCH_EDGES"] = "80000"
+            with tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                config = self._project(root)
+                warnings = [
+                    new_warning("svfmemplus", "uaf", {"path": [{"id": str(index)}]})
+                    for index in range(25)
+                ]
+                runner = FakeRunner([warnings])
+                analyze(AnalyzeRequest(config), runner=runner)
+                run_active_learning(
+                    ActiveLearningRequest(config, 1, "fphandler", "random"), runner=runner
+                )
+                self.assertIsNotNone(runner.last_train_args)
+                args = runner.last_train_args or []
+                self.assertIn("--batch-size", args)
+                self.assertEqual("1", args[args.index("--batch-size") + 1])
+                self.assertIn("--max-unlabeled", args)
+                self.assertEqual("64", args[args.index("--max-unlabeled") + 1])
+                self.assertIn("--max-batch-nodes", args)
+                self.assertEqual("50000", args[args.index("--max-batch-nodes") + 1])
+                self.assertIn("--max-batch-edges", args)
+                self.assertEqual("80000", args[args.index("--max-batch-edges") + 1])
+        finally:
+            for key, value in previous.items():
+                if value is None:
+                    os.environ.pop(key, None)
+                else:
+                    os.environ[key] = value
 
 
 def _warning_documents(root: Path):

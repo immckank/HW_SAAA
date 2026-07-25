@@ -616,6 +616,18 @@ def _env_int(name: str, default: int, *aliases: str) -> int:
     return default
 
 
+def _env_float(name: str, default: float, *aliases: str) -> float:
+    for key in (name, *aliases):
+        raw = os.environ.get(key)
+        if raw is None or not str(raw).strip():
+            continue
+        try:
+            return float(str(raw).strip())
+        except ValueError as error:
+            raise ValueError(f"{key} must be a number") from error
+    return default
+
+
 def _env_flag(name: str, default: bool, *aliases: str) -> bool:
     for key in (name, *aliases):
         raw = os.environ.get(key)
@@ -764,6 +776,124 @@ def _select_feedback_ids(ranking: Path, excluded: set[str]) -> list[str]:
     return selected
 
 
+def _active_learning_train_cli_args() -> list[str]:
+    """Build explicit train CLI flags from runtime.env (UI path)."""
+    return [
+        "--epochs",
+        str(
+            _env_int(
+                "ACTIVE_LEARNING_TRAIN_EPOCHS",
+                50,
+                "active_learning_train_epochs",
+            )
+        ),
+        "--lr",
+        str(
+            _env_float(
+                "ACTIVE_LEARNING_TRAIN_LR",
+                1e-3,
+                "active_learning_train_lr",
+            )
+        ),
+        "--weight-decay",
+        str(
+            _env_float(
+                "ACTIVE_LEARNING_TRAIN_WEIGHT_DECAY",
+                5e-4,
+                "active_learning_train_weight_decay",
+            )
+        ),
+        "--batch-size",
+        str(
+            _env_int(
+                "ACTIVE_LEARNING_TRAIN_BATCH_SIZE",
+                1,
+                "active_learning_train_batch_size",
+            )
+        ),
+        "--val-ratio",
+        str(
+            _env_float(
+                "ACTIVE_LEARNING_TRAIN_VAL_RATIO",
+                0.2,
+                "active_learning_train_val_ratio",
+            )
+        ),
+        "--patience",
+        str(
+            _env_int(
+                "ACTIVE_LEARNING_TRAIN_PATIENCE",
+                10,
+                "active_learning_train_patience",
+            )
+        ),
+        "--min-labels",
+        str(
+            _env_int(
+                "ACTIVE_LEARNING_TRAIN_MIN_LABELS",
+                2,
+                "active_learning_train_min_labels",
+            )
+        ),
+        "--uncertain-weight",
+        str(
+            _env_float(
+                "ACTIVE_LEARNING_UNCERTAIN_WEIGHT",
+                0.3,
+                "active_learning_uncertain_weight",
+            )
+        ),
+        "--unlabeled-weight",
+        str(
+            _env_float(
+                "ACTIVE_LEARNING_UNLABELED_WEIGHT",
+                0.1,
+                "active_learning_unlabeled_weight",
+            )
+        ),
+        "--weak-pos",
+        str(
+            _env_float(
+                "ACTIVE_LEARNING_WEAK_POS",
+                0.7,
+                "active_learning_weak_pos",
+            )
+        ),
+        "--weak-neg",
+        str(
+            _env_float(
+                "ACTIVE_LEARNING_WEAK_NEG",
+                0.3,
+                "active_learning_weak_neg",
+            )
+        ),
+        "--max-unlabeled",
+        str(
+            _env_int(
+                "ACTIVE_LEARNING_TRAIN_MAX_UNLABELED",
+                64,
+                "active_learning_max_unlabeled",
+            )
+        ),
+        "--max-batch-nodes",
+        str(
+            _env_int(
+                "ACTIVE_LEARNING_TRAIN_MAX_BATCH_NODES",
+                50_000,
+                "active_learning_train_max_batch_nodes",
+            )
+        ),
+        "--max-batch-edges",
+        str(
+            _env_int(
+                "ACTIVE_LEARNING_TRAIN_MAX_BATCH_EDGES",
+                80_000,
+                "active_learning_train_max_batch_edges",
+            )
+        ),
+    ]
+
+
 def run_active_learning(
     request: ActiveLearningRequest,
     progress: ProgressCallback | None = None,
@@ -858,6 +988,7 @@ def run_active_learning(
                             str(checkpoint_stage),
                             "--round-id",
                             round_id,
+                            *_active_learning_train_cli_args(),
                         ]
                         if model is not None:
                             train_args.extend(["--init-model", str(model)])

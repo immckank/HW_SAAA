@@ -23,6 +23,8 @@ DOCKERFILE="$REPO_ROOT/dockerfile.svfmemplus"
 BUILD_IMAGE=0
 SKIP_PREFLIGHT=0
 PUBLISH_HOST="127.0.0.1"
+# docker 默认挂载宿主机 GPU 0；local 模式不使用本变量。
+DOCKER_GPUS="device=0"
 
 usage() {
   cat <<'EOF'
@@ -40,6 +42,9 @@ usage() {
   --dockerfile PATH      构建用 Dockerfile（默认: dockerfile.svfmemplus）
   --build                docker 模式启动前先 docker build
   --skip-preflight       跳过 torch / openai / SVF 可执行文件预检
+  --gpus SPEC            仅 docker：传给 docker --gpus（默认: device=0）
+                         示例: device=0 | device=1 | '"device=0,1"' | all
+  --no-gpu               仅 docker：不挂载 GPU（纯 CPU）
   -h, --help             显示帮助
 
 runtime.env 示例字段:
@@ -47,6 +52,7 @@ runtime.env 示例字段:
   DEEPSEEK_API_KEY / QWEN_API_KEY / HW_KEY,
   AGENT_MAX_TURNS, AGENT_CONCLUSION_RESERVE_TURNS,
   ACTIVE_LEARNING_FEEDBACK_TOP_K / BOTTOM_K / RANDOM_K / ...
+  ACTIVE_LEARNING_TRAIN_BATCH_SIZE / MAX_UNLABELED / MAX_BATCH_NODES / ...
 EOF
 }
 
@@ -131,6 +137,20 @@ validate_runtime_env() {
     0|1|true|false|yes|no|on|off) ;;
     *) die "ACTIVE_LEARNING_FEEDBACK_SKIP_CLASSIFIED 必须是布尔值" ;;
   esac
+  for key in \
+    ACTIVE_LEARNING_TRAIN_BATCH_SIZE \
+    ACTIVE_LEARNING_TRAIN_MAX_UNLABELED \
+    ACTIVE_LEARNING_TRAIN_EPOCHS \
+    ACTIVE_LEARNING_TRAIN_PATIENCE \
+    ACTIVE_LEARNING_TRAIN_MIN_LABELS \
+    ACTIVE_LEARNING_TRAIN_MAX_BATCH_NODES \
+    ACTIVE_LEARNING_TRAIN_MAX_BATCH_EDGES
+  do
+    value="${!key:-}"
+    if [[ -n "$value" ]] && ! [[ "$value" =~ ^[0-9]+$ ]]; then
+      die "$key 必须是非负整数"
+    fi
+  done
 }
 
 print_runtime_summary() {
@@ -141,6 +161,7 @@ print_runtime_summary() {
   echo "  AGENT_MAX_TURNS=${AGENT_MAX_TURNS:-64}"
   echo "  AGENT_CONCLUSION_RESERVE_TURNS=${AGENT_CONCLUSION_RESERVE_TURNS:-10}"
   echo "  AL_FEEDBACK=top ${ACTIVE_LEARNING_FEEDBACK_TOP_K:-10} + bottom ${ACTIVE_LEARNING_FEEDBACK_BOTTOM_K:-10} + random ${ACTIVE_LEARNING_FEEDBACK_RANDOM_K:-0}"
+  echo "  AL_TRAIN=batch ${ACTIVE_LEARNING_TRAIN_BATCH_SIZE:-1} max_unlabeled ${ACTIVE_LEARNING_TRAIN_MAX_UNLABELED:-64}"
   echo "  env-file=$ENV_FILE"
   echo "  config=$CONFIG_PATH"
 }
@@ -212,10 +233,27 @@ docker_image_exists() {
   docker image inspect "$IMAGE" >/dev/null 2>&1
 }
 
+require_docker_gpu() {
+  local probe
+  [[ -n "$DOCKER_GPUS" ]] || return 0
+  echo "gpu probe: docker --gpus $DOCKER_GPUS"
+  set +e
+  # 不依赖业务镜像：只验证 Docker 能否申请 GPU device。
+  probe="$(docker run --rm --gpus "$DOCKER_GPUS" ubuntu:24.04 true 2>&1)"
+  status=$?
+  set -e
+  if [[ $status -ne 0 ]]; then
+    echo "$probe" >&2
+    die "docker --gpus 不可用（常见原因: 未安装 nvidia-container-toolkit）。请先执行: ./script/install_nvidia_container_toolkit.sh"
+  fi
+  echo "ok: docker --gpus $DOCKER_GPUS"
+}
+
 start_docker() {
   local bind_host="0.0.0.0"
   local publish="${PUBLISH_HOST}:${PORT}:${PORT}"
   local svf_root
+  local -a gpu_args=()
 
   command -v docker >/dev/null 2>&1 || die "未找到 docker 命令"
   ensure_workflow_ini
@@ -225,6 +263,14 @@ start_docker() {
   print_runtime_summary
   svf_root="${SVF_ROOT:-$REPO_ROOT/SVFmemplus}"
 
+  if [[ -n "$DOCKER_GPUS" ]]; then
+    gpu_args=(--gpus "$DOCKER_GPUS")
+    echo "gpu: docker --gpus $DOCKER_GPUS"
+    require_docker_gpu
+  else
+    echo "gpu: disabled (--no-gpu)"
+  fi
+
   if [[ "$BUILD_IMAGE" -eq 1 ]] || ! docker_image_exists; then
     echo "docker build: -f $DOCKERFILE -t $IMAGE"
     docker build -f "$DOCKERFILE" -t "$IMAGE" "$REPO_ROOT"
@@ -233,10 +279,12 @@ start_docker() {
   if [[ "$SKIP_PREFLIGHT" -eq 0 ]]; then
     echo "preflight: inside container"
     docker run --rm \
+      "${gpu_args[@]}" \
       --user "$(id -u):$(id -g)" \
       -e HOME=/tmp \
       --env-file "$ENV_FILE" \
       -e "SVF_ROOT=$svf_root" \
+      -e "WORKFLOW_EXPECT_CUDA=$([ -n "$DOCKER_GPUS" ] && echo 1 || echo 0)" \
       -v "$REPO_ROOT:$REPO_ROOT" \
       -v "$svf_root:$svf_root" \
       -w "$REPO_ROOT" \
@@ -256,6 +304,20 @@ if missing:
         print(f"  - {item}", file=sys.stderr)
     raise SystemExit(1)
 print("ok: openai, torch, torch_geometric")
+import torch
+cuda_ok = torch.cuda.is_available()
+print(
+    f"ok: torch.cuda.is_available={cuda_ok} "
+    f"device_count={torch.cuda.device_count()} "
+    f"torch={torch.__version__} cuda_built={torch.version.cuda}"
+)
+if os.environ.get("WORKFLOW_EXPECT_CUDA") == "1" and not cuda_ok:
+    print(
+        "error: 已请求 GPU，但 torch.cuda 不可用；"
+        "请确认 nvidia-container-toolkit 正常，并用 --build 重建 CUDA 版镜像",
+        file=sys.stderr,
+    )
+    raise SystemExit(1)
 root = Path(os.environ.get("SVF_ROOT", ""))
 for binary in ("saber", "bof"):
     path = root / "Release-build" / "bin" / binary
@@ -272,6 +334,7 @@ print("ok: saber, bof")
 
   echo "docker run: publish $publish -> container ${bind_host}:${PORT}"
   exec docker run --rm --init \
+    "${gpu_args[@]}" \
     --user "$(id -u):$(id -g)" \
     -e HOME=/tmp \
     --env-file "$ENV_FILE" \
@@ -334,6 +397,15 @@ parse_args() {
         ;;
       --build) BUILD_IMAGE=1; shift ;;
       --skip-preflight) SKIP_PREFLIGHT=1; shift ;;
+      --gpus)
+        [[ $# -ge 2 ]] || die "--gpus 需要参数（如 device=0 / device=1 / all）"
+        DOCKER_GPUS="$2"
+        shift 2
+        ;;
+      --no-gpu)
+        DOCKER_GPUS=""
+        shift
+        ;;
       -h|--help) usage; exit 0 ;;
       *) die "未知参数: $1" ;;
     esac

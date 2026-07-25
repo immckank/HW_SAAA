@@ -19,17 +19,21 @@ RUN apt-get update && \
     update-alternatives --install /usr/bin/python3 python3 /usr/bin/python3.12 1 && \
     rm -rf /var/lib/apt/lists/*
 
+# CUDA 12.4 wheels match host driver (nvidia-smi reports CUDA 12.4).
+# Runtime GPU access still requires nvidia-container-toolkit on the host.
 RUN python3 -m venv /opt/venv && \
     /opt/venv/bin/pip install --upgrade pip setuptools wheel && \
     /opt/venv/bin/pip install openai google-genai && \
     /opt/venv/bin/pip install tree_sitter tree_sitter_languages tree_sitter_c pytest && \
     /opt/venv/bin/pip install numpy pandas scikit-learn tqdm matplotlib seaborn && \
-    /opt/venv/bin/pip install torch --index-url https://download.pytorch.org/whl/cpu && \
+    /opt/venv/bin/pip install torch --index-url https://download.pytorch.org/whl/cu124 && \
     /opt/venv/bin/pip install torch-geometric && \
     rm -rf /var/lib/apt/lists/*
 
 
 ENV PATH="/opt/venv/bin:$PATH"
+# NVIDIA_VISIBLE_DEVICES 由 docker --gpus / nvidia-container-toolkit 注入，不要在镜像里写死。
+ENV NVIDIA_DRIVER_CAPABILITIES=compute,utility
 
 WORKDIR /src
 

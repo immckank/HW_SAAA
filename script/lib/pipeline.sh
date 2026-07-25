@@ -331,6 +331,8 @@ run_active_learning_train_phase() {
     --weak-pos "${active_learning_weak_pos:-0.7}"
     --weak-neg "${active_learning_weak_neg:-0.3}"
     --max-unlabeled "${active_learning_max_unlabeled:-512}"
+    --max-batch-nodes "${active_learning_train_max_batch_nodes:-50000}"
+    --max-batch-edges "${active_learning_train_max_batch_edges:-80000}"
   )
   if [[ -n "${ROUND_ID:-}" ]]; then
     train_args+=(--round-id "$ROUND_ID")
