@@ -13,7 +13,7 @@ import math
 from typing import Any, Mapping, MutableMapping
 
 
-WARNING_TYPES = frozenset({"leak", "dfree", "uaf", "uninit", "bof"})
+WARNING_TYPES = frozenset({"leak", "dfree", "uaf", "uninit", "bof", "tabular"})
 CLASSIFICATIONS = frozenset({"TP", "FP", "UNCERTAIN"})
 
 FPHANDLER_BASE = 0.5

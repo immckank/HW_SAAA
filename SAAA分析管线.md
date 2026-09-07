@@ -1,32 +1,42 @@
-# 单项目 SVFmemplus 分析工作流
-
-本文说明当前可执行工作流。详细设计边界见 `PLAN.md`，数据契约见
-`contracts/README.md`。
+# SAAA分析工作流
 
 ## 1. 定位
 
-主仓库按“一项目一配置、一项目一产物目录”工作。用户切换项目时切换
-`workflow.ini`，无需项目数据库、任务队列或 Web 服务。
+主仓库按“一项目一配置、一项目一产物目录”工作。用户切换项目时切换 `workflow.ini`，修改运行时配置文件使用 `runtime.env`。
 
-项目配置指向：
+项目配置 `workflow.ini` 指向：
 
 1. 一个待分析的 `.bc` 文件；
 2. 对应源码目录；
 3. 本项目的管理产物目录；
 4. 项目标签与描述（供 FPhandler Agent 提示使用）。
 
-LLM、API Key、Agent 轮次和主动学习反馈选取参数属于运行环境，写在
-`runtime.env`，不进入项目 INI。
+运行时配置 `runtime.env` 指向：
+LLM、API Key、Agent 轮次和主动学习反馈选取参数等运行环境。
 
-SVFmemplus、FPhandler 和 ActiveLearning 仍各自提供底层 CLI；正常工作流统一由
-Python `orchestrator` 调用。日常交互入口是本地 UI：
+SVFmemplus、FPhandler 和 ActiveLearning 仍各自提供底层 CLI；正常工作流统一由 Python `orchestrator` 调用。交互入口是本地 UI：
 
 ```bash
 ./script/run_local_ui.sh start-server local|docker
 ```
 
-Shell 另保留旧 `script/config.env` 兼容包装；新项目优先使用 `workflow.ini` +
-`runtime.env` + `run_local_ui.sh`。
+基于主动学习的告警智能分析平台主要模块与目录结构简介：
+
+```
+SAAA告警排序分析平台
+├── SVFmemplus/               # 静态分析引擎：基于 SVF 扩展，对 LLVM bitcode 执行指针分析与内存安全检查（BOF / UAF / 泄漏），输出结构化告警 JSON
+├── FPhandler/                # 告警分类 Agent：调用 LLM 对单条告警进行语义推理，判断真/假阳性并生成结论，维护语义规则库减少重复推理
+├── ActiveLearning/           # 主动学习模块：训练轻量分类模型，预测未标注告警置信度，向 orchestrator 反馈高价值样本供优先审查
+├── orchestrator/             # 流程编排器：读取配置，依次驱动 SVFmemplus → FPhandler → ActiveLearning 的完整管线，管理工作空间和服务生命周期
+├── local_ui/                 # 本地 Web 服务：提供告警浏览、人工标注和项目管理的 HTTP 接口
+├── script/                   # 运维脚本集：SVF 重编译、管线一键运行、主动学习循环、统计等
+├── contracts/                # 数据契约层：定义告警 JSON Schema 并提供 Python 校验，确保各模块间数据格式兼容
+├── tests/                    # 集成测试：覆盖告警流转与 orchestrator 端到端流程
+├── dockerfile.svfmemplus     # SVFmemplus 容器镜像构建文件
+├── runtime.env.example       # 运行时配置模板（LLM / Agent / 主动学习参数）
+├── workflow.ini.example      # 项目配置模板（bitcode 路径、源码目录、产物目录）
+└── SAAA分析管线.md            # 本文档
+```
 
 ## 2. 配置
 

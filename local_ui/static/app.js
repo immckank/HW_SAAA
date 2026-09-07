@@ -7,13 +7,18 @@ const elements = {
   progress: document.getElementById("progress-list"),
   result: document.getElementById("operation-result"),
   typeFilter: document.getElementById("type-filter"),
+  pathScope: document.getElementById("path-scope"),
   scoreOrder: document.getElementById("score-order"),
   alertCount: document.getElementById("alert-count"),
   alertsBody: document.getElementById("alerts-body"),
   refresh: document.getElementById("refresh-alerts"),
+  selectVisible: document.getElementById("select-visible"),
+  clearSelection: document.getElementById("clear-selection"),
+  triageFromSelection: document.getElementById("triage-from-selection"),
 };
 
 let operationWasRunning = false;
+const selectedAlertIds = new Set();
 
 async function requestJSON(url, options = {}) {
   const response = await fetch(url, options);
@@ -39,6 +44,9 @@ function setBusy(busy) {
     button.disabled = busy;
   });
   elements.refresh.disabled = busy;
+  elements.selectVisible.disabled = busy;
+  elements.clearSelection.disabled = busy;
+  elements.triageFromSelection.disabled = busy;
 }
 
 function setBadge(status) {
@@ -80,6 +88,7 @@ function renderOperation(state) {
 async function loadProject() {
   const project = await requestJSON("/api/project");
   document.getElementById("project-config").textContent = project.config_path;
+  document.getElementById("project-runtime").textContent = project.env_file || "—";
   document.getElementById("project-bitcode").textContent = project.bitcode_path;
   document.getElementById("project-source").textContent = project.source_dir;
   document.getElementById("project-artifact").textContent = project.artifact_dir;
@@ -100,11 +109,15 @@ function appendCell(row, value, className = "") {
 
 function renderAlerts(data) {
   elements.alertsBody.replaceChildren();
-  elements.alertCount.textContent = `显示 ${data.filtered} / 共 ${data.total} 条`;
+  const pathNote = data.path_scope === "project"
+    ? `路径匹配 ${data.path_filtered}`
+    : "未按路径过滤";
+  elements.alertCount.textContent =
+    `显示 ${data.filtered} / ${pathNote} / 共 ${data.total} 条；已勾选 ${selectedAlertIds.size}`;
   if (!data.alerts.length) {
     const row = document.createElement("tr");
     const cell = document.createElement("td");
-    cell.colSpan = 9;
+    cell.colSpan = 10;
     cell.className = "empty-row";
     cell.textContent = "当前条件下没有告警";
     row.appendChild(cell);
@@ -114,6 +127,20 @@ function renderAlerts(data) {
   data.alerts.forEach((alert) => {
     const row = document.createElement("tr");
     if (alert.suppressed) row.classList.add("suppressed");
+    const selectCell = document.createElement("td");
+    selectCell.className = "select-col";
+    const checkbox = document.createElement("input");
+    checkbox.type = "checkbox";
+    checkbox.dataset.alertId = alert.alert_id;
+    checkbox.checked = selectedAlertIds.has(alert.alert_id);
+    checkbox.addEventListener("change", () => {
+      if (checkbox.checked) selectedAlertIds.add(alert.alert_id);
+      else selectedAlertIds.delete(alert.alert_id);
+      elements.alertCount.textContent =
+        `显示 ${data.filtered} / ${pathNote} / 共 ${data.total} 条；已勾选 ${selectedAlertIds.size}`;
+    });
+    selectCell.appendChild(checkbox);
+    row.appendChild(selectCell);
     appendCell(row, alert.alert_id);
     appendCell(row, alert.producer);
     appendCell(row, alert.type);
@@ -131,6 +158,7 @@ async function loadAlerts() {
   const params = new URLSearchParams({
     type: elements.typeFilter.value,
     order: elements.scoreOrder.value,
+    path_scope: elements.pathScope.value,
   });
   try {
     const data = await requestJSON(`/api/alerts?${params}`);
@@ -172,6 +200,44 @@ async function submitOperation(kind, payload) {
     showMessage(error.message);
   }
 }
+
+async function resolveImportPath() {
+  const typed = document.getElementById("import-xlsx-path").value.trim();
+  const fileInput = document.getElementById("import-file");
+  const file = fileInput.files && fileInput.files[0];
+  if (file) {
+    const body = new FormData();
+    body.append("xlsx", file, file.name);
+    const uploaded = await requestJSON("/api/uploads/xlsx", {method: "POST", body});
+    return uploaded.xlsx_path;
+  }
+  if (typed) return typed;
+  throw new Error("请选择 XLSX 文件或填写本机路径");
+}
+
+document.getElementById("import-form").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const weight = Number(document.getElementById("import-weight").value);
+  if (!Number.isFinite(weight) || weight < 0 || weight > 1) {
+    showMessage("initial weight 必须在 0 到 1 之间");
+    return;
+  }
+  try {
+    setBusy(true);
+    const xlsxPath = await resolveImportPath();
+    await submitOperation("import-xlsx", {
+      xlsx_path: xlsxPath,
+      producer: document.getElementById("import-producer").value.trim() || "tabular-sast",
+      initial_weight: weight,
+      mode: document.getElementById("import-mode").value,
+      path_filter: document.getElementById("import-path-filter").checked,
+    });
+  } catch (error) {
+    operationWasRunning = false;
+    setBusy(false);
+    showMessage(error.message);
+  }
+});
 
 document.getElementById("analyze-form").addEventListener("submit", (event) => {
   event.preventDefault();
@@ -226,7 +292,31 @@ document.getElementById("active-form").addEventListener("submit", (event) => {
   submitOperation("active-learning", {rounds, feedback, initial_model: model});
 });
 
+elements.triageFromSelection.addEventListener("click", () => {
+  if (!selectedAlertIds.size) {
+    showMessage("请先勾选告警");
+    return;
+  }
+  document.getElementById("triage-alert-ids").value = [...selectedAlertIds].join("\n");
+  document.getElementById("triage-mode").value = "classify";
+  showMessage(`已填入 ${selectedAlertIds.size} 条告警 ID，可执行 Triage`);
+});
+
+elements.selectVisible.addEventListener("click", () => {
+  elements.alertsBody.querySelectorAll('input[type="checkbox"][data-alert-id]').forEach((box) => {
+    box.checked = true;
+    selectedAlertIds.add(box.dataset.alertId);
+  });
+  loadAlerts();
+});
+
+elements.clearSelection.addEventListener("click", () => {
+  selectedAlertIds.clear();
+  loadAlerts();
+});
+
 elements.typeFilter.addEventListener("change", loadAlerts);
+elements.pathScope.addEventListener("change", loadAlerts);
 elements.scoreOrder.addEventListener("change", loadAlerts);
 elements.refresh.addEventListener("click", loadAlerts);
 

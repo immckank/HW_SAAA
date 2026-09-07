@@ -3,14 +3,14 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>告警分析工作流</title>
+  <title>主动学习告警分析平台</title>
   <link rel="stylesheet" href="/style.css">
 </head>
 <body>
   <header class="page-header">
     <div>
-      <p class="eyebrow">openEuler · Single Project</p>
-      <h1>告警分析工作流</h1>
+      <p class="eyebrow">SAAA · Single Project</p>
+      <h1>主动学习告警分析平台</h1>
       <p class="subtitle">绑定一个 workflow.ini，查看告警并调用 orchestrator。</p>
     </div>
     <span id="operation-badge" class="badge badge-idle">空闲</span>
@@ -22,7 +22,13 @@
         <h2 id="project-title">当前项目</h2>
       </div>
       <dl id="project-summary" class="project-grid">
-        <div><dt>配置</dt><dd id="project-config">—</dd></div>
+        <div>
+          <dt>配置</dt>
+          <dd class="config-stack">
+            <div class="config-row"><span class="config-kind">workflow</span><span id="project-config">—</span></div>
+            <div class="config-row"><span class="config-kind">runtime</span><span id="project-runtime">—</span></div>
+          </dd>
+        </div>
         <div><dt>Bitcode</dt><dd id="project-bitcode">—</dd></div>
         <div><dt>源码目录</dt><dd id="project-source">—</dd></div>
         <div><dt>产物目录</dt><dd id="project-artifact">—</dd></div>
@@ -30,6 +36,40 @@
     </section>
 
     <section class="operations" aria-label="工作流操作">
+      <form id="import-form" class="card operation-card">
+        <div class="operation-title">
+          <span class="step">00</span>
+          <div><h2>Import XLSX</h2><p>导入外部表格告警（无图，可初始化分值）</p></div>
+        </div>
+        <label>XLSX 文件
+          <input id="import-file" type="file" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet">
+        </label>
+        <label>或本机路径
+          <input id="import-xlsx-path" type="text" placeholder="/path/to/alerts.xlsx">
+        </label>
+        <div class="form-row">
+          <label>Producer
+            <input id="import-producer" type="text" value="tabular-sast">
+          </label>
+          <label>Initial weight
+            <input id="import-weight" type="number" value="0.5" min="0" max="1" step="0.01" required>
+          </label>
+        </div>
+        <div class="form-row">
+          <label>模式
+            <select id="import-mode">
+              <option value="merge">merge</option>
+              <option value="replace-producer">replace-producer</option>
+            </select>
+          </label>
+          <label class="toggle-line">
+            <input id="import-path-filter" type="checkbox" checked>
+            <span>仅导入匹配 source_dir 的路径</span>
+          </label>
+        </div>
+        <button data-operation type="submit" class="primary">导入表格告警</button>
+      </form>
+
       <form id="analyze-form" class="card operation-card">
         <div class="operation-title">
           <span class="step">01</span>
@@ -60,6 +100,7 @@
         <label>Alert ID（每行一个）
           <textarea id="triage-alert-ids" rows="4" spellcheck="false" placeholder="sha256:..."></textarea>
         </label>
+        <button id="triage-from-selection" type="button" class="secondary">填入表格勾选项</button>
         <div class="form-row">
           <label>模式
             <select id="triage-mode">
@@ -121,6 +162,13 @@
               <option value="uaf">uaf</option>
               <option value="uninit">uninit</option>
               <option value="bof">bof</option>
+              <option value="tabular">tabular</option>
+            </select>
+          </label>
+          <label>路径范围
+            <select id="path-scope">
+              <option value="project">匹配 source_dir</option>
+              <option value="all">全部</option>
             </select>
           </label>
           <label>Score 排序
@@ -130,12 +178,15 @@
             </select>
           </label>
           <button id="refresh-alerts" type="button" class="secondary">刷新</button>
+          <button id="select-visible" type="button" class="secondary">全选可见</button>
+          <button id="clear-selection" type="button" class="secondary">清空勾选</button>
         </div>
       </div>
       <div class="table-shell">
         <table>
           <thead>
             <tr>
+              <th class="select-col"></th>
               <th>alert_id</th>
               <th>producer</th>
               <th>type</th>

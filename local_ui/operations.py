@@ -12,12 +12,15 @@ from typing import Any, Callable, Mapping
 from orchestrator import (
     ActiveLearningRequest,
     AnalyzeRequest,
+    ImportXlsxRequest,
     TriageRequest,
     analyze,
+    import_xlsx,
     run_active_learning,
     triage,
 )
 from orchestrator.services import VALID_CHECKERS
+from orchestrator.xlsx_import import DEFAULT_PRODUCER
 
 from .project import BoundProject
 
@@ -66,6 +69,7 @@ class OperationManager:
                 "analyze": analyze,
                 "triage": triage,
                 "active-learning": run_active_learning,
+                "import-xlsx": import_xlsx,
             }
         )
         self._lock = threading.Lock()
@@ -146,6 +150,30 @@ class OperationManager:
                 rounds=rounds,
                 feedback=feedback,
                 initial_model=_required_text(payload.get("initial_model"), "initial_model"),
+            )
+
+        if kind == "import-xlsx":
+            xlsx_path = _required_text(payload.get("xlsx_path"), "xlsx_path")
+            mode = payload.get("mode", "merge")
+            if mode not in {"merge", "replace-producer"}:
+                raise ValueError("mode must be merge or replace-producer")
+            path_filter = payload.get("path_filter", True)
+            if not isinstance(path_filter, bool):
+                raise ValueError("path_filter must be a boolean")
+            weight = payload.get("initial_weight", 0.5)
+            if isinstance(weight, bool) or not isinstance(weight, (int, float)):
+                raise ValueError("initial_weight must be a number")
+            weight_value = float(weight)
+            if not 0.0 <= weight_value <= 1.0:
+                raise ValueError("initial_weight must be between 0 and 1")
+            producer = _optional_text(payload.get("producer"), "producer") or DEFAULT_PRODUCER
+            return ImportXlsxRequest(
+                config_path=config_path,
+                xlsx_path=xlsx_path,
+                producer=producer,
+                initial_weight=weight_value,
+                path_filter=path_filter,
+                mode=mode,
             )
 
         raise ValueError(f"unsupported operation: {kind}")

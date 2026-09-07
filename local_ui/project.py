@@ -13,9 +13,10 @@ class ConfigurationChangedError(RuntimeError):
 
 
 class BoundProject:
-    def __init__(self, config_path: str | Path):
+    def __init__(self, config_path: str | Path, *, env_file: str | Path | None = None):
         self.config = WorkflowConfig.load(config_path)
         self.config_path = self.config.path
+        self.env_file = Path(env_file).resolve() if env_file else None
         self._config_digest = self._read_digest()
 
     def _read_digest(self) -> str:
@@ -37,6 +38,7 @@ class BoundProject:
         self.assert_unchanged()
         return {
             "config_path": str(self.config_path),
+            "env_file": str(self.env_file) if self.env_file else None,
             "bitcode_path": str(self.config.bitcode_path),
             "source_dir": str(self.config.source_dir),
             "artifact_dir": str(self.config.artifact_dir),

@@ -1,0 +1,19 @@
+{
+  "alert_id": "sha256:be77b554845aa80e66cfb08888babc547a530983548d5b911d0ded357d793ba6",
+  "producer": "tabular-sast",
+  "type": "tabular",
+  "content": {
+    "location": {"file": "src/cache.c", "line": 47},
+    "snippet": "ptr = malloc(n);\nuse(ptr);",
+    "norm": "内存泄漏",
+    "rule_name": "MEM.LEAK"
+  },
+  "graph_ids": [],
+  "suppressed": false,
+  "classifications": null,
+  "active_learning": {
+    "weight": 0.5,
+    "model": "xlsx-init"
+  },
+  "score": 0.5
+}

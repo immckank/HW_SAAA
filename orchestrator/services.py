@@ -16,6 +16,12 @@ from typing import Any, Callable, Iterable, Literal
 from .config import WorkflowConfig
 from .runner import REPOSITORY_ROOT, ToolRunner
 from .workspace import ArtifactWorkspace, sha256_file, write_json_atomic
+from .xlsx_import import (
+    DEFAULT_PRODUCER,
+    build_tabular_warning,
+    path_matches_source,
+    read_xlsx_rows,
+)
 
 def _dependency_path(default: Path, *environment_names: str) -> Path:
     for name in environment_names:
@@ -134,6 +140,32 @@ class ActiveLearningResult:
     skipped_suppressed: int
     checkpoints: list[str]
     stopped_reason: str | None
+    log_path: str
+    ok: bool = True
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass(frozen=True)
+class ImportXlsxRequest:
+    config_path: str | Path = "workflow.ini"
+    xlsx_path: str | Path = ""
+    producer: str = DEFAULT_PRODUCER
+    initial_weight: float = 0.5
+    path_filter: bool = True
+    mode: Literal["merge", "replace-producer"] = "merge"
+
+
+@dataclass
+class ImportXlsxResult:
+    operation_id: str
+    producer: str
+    mode: str
+    path_filter: bool
+    xlsx_path: str
+    counts: dict[str, int]
+    alerts_dir: str
     log_path: str
     ok: bool = True
 
@@ -354,7 +386,14 @@ def _assert_current_baseline(
     state = workspace.read_state()
     if state is None or not isinstance(state.get("baseline"), dict):
         raise ValueError("project has no analysis baseline; run analyze first")
-    checkers = _normalize_checkers(state["baseline"].get("checkers") or ())
+    baseline = state["baseline"]
+    if baseline.get("kind") == "tabular-import":
+        if baseline.get("source_dir") != str(config.source_dir):
+            raise ValueError(
+                "tabular import baseline source_dir changed; re-import or run analyze"
+            )
+        return ()
+    checkers = _normalize_checkers(baseline.get("checkers") or ())
     identity = _baseline_identity(config, runner, checkers)
     _check_baseline(workspace, identity, new_baseline=False)
     semantic_hash = state.get("semantic_facts_sha256")
@@ -363,6 +402,160 @@ def _assert_current_baseline(
     ):
         raise ValueError("semantic facts changed since the last analysis; run analyze first")
     return checkers
+
+
+def _assert_triage_baseline(
+    config: WorkflowConfig,
+    workspace: ArtifactWorkspace,
+    runner: ToolRunner,
+    documents: list[dict[str, Any]],
+) -> tuple[str, ...]:
+    if documents and all(item.get("type") == "tabular" for item in documents):
+        state = workspace.read_state()
+        if state is None:
+            # Allow triage of imported tabular alerts even before state was written.
+            if any(workspace.alerts.rglob("*.json")):
+                return ()
+            raise ValueError("project has no alerts; import xlsx or run analyze first")
+        baseline = state.get("baseline")
+        if isinstance(baseline, dict) and baseline.get("kind") == "tabular-import":
+            if baseline.get("source_dir") != str(config.source_dir):
+                raise ValueError(
+                    "tabular import baseline source_dir changed; re-import xlsx"
+                )
+            return ()
+        if isinstance(baseline, dict) and baseline.get("checkers"):
+            return _assert_current_baseline(config, workspace, runner)
+        return ()
+    return _assert_current_baseline(config, workspace, runner)
+
+
+def _alert_digest_name(alert_id: str) -> str:
+    text = str(alert_id)
+    if text.startswith("sha256:"):
+        text = text[len("sha256:") :]
+    return f"{text}.json"
+
+
+def import_xlsx(
+    request: ImportXlsxRequest,
+    progress: ProgressCallback | None = None,
+    cancel: Any = None,
+    *,
+    runner: ToolRunner | None = None,
+) -> ImportXlsxResult:
+    del cancel, runner  # import does not invoke external analyzers
+    if request.mode not in {"merge", "replace-producer"}:
+        raise ValueError("mode must be merge or replace-producer")
+    producer = str(request.producer or "").strip() or DEFAULT_PRODUCER
+    weight = float(request.initial_weight)
+    if not 0.0 <= weight <= 1.0:
+        raise ValueError("initial_weight must be between 0 and 1")
+    xlsx_path = Path(request.xlsx_path).expanduser()
+    if not xlsx_path.is_absolute():
+        xlsx_path = (Path.cwd() / xlsx_path).resolve()
+    else:
+        xlsx_path = xlsx_path.resolve()
+
+    operation_id = _operation_id("import-xlsx")
+    emit = _emitter(operation_id, progress)
+    config = WorkflowConfig.load(request.config_path)
+    workspace = ArtifactWorkspace(config)
+    log_path = workspace.logs / f"{operation_id}.log"
+    log_path.write_text(
+        f"import-xlsx producer={producer} mode={request.mode} path={xlsx_path}\n",
+        encoding="utf-8",
+    )
+
+    emit("import", f"reading spreadsheet {xlsx_path}")
+    rows = read_xlsx_rows(xlsx_path)
+    counts = {
+        "read": len(rows),
+        "imported": 0,
+        "skipped_dup": 0,
+        "skipped_path": 0,
+        "replaced": 0,
+        "failed": 0,
+    }
+
+    with workspace.lock():
+        workspace.ensure_semantic_repository(
+            REPOSITORY_ROOT / "contracts" / "examples" / "semantic-fact-v2.json"
+        )
+        workspace.alerts.mkdir(parents=True, exist_ok=True)
+        if request.mode == "replace-producer":
+            removed = 0
+            for path in list(workspace.alerts.rglob("*.json")):
+                try:
+                    with path.open(encoding="utf-8") as stream:
+                        document = json.load(stream)
+                    if document.get("producer") == producer:
+                        path.unlink()
+                        removed += 1
+                except (OSError, json.JSONDecodeError, TypeError):
+                    continue
+            counts["replaced"] = removed
+            emit("import", f"removed {removed} existing alert(s) for producer={producer}")
+
+        existing = _warning_index(workspace.alerts)
+        for row in rows:
+            if request.path_filter and not path_matches_source(row["file"], config.source_dir):
+                counts["skipped_path"] += 1
+                continue
+            try:
+                warning = build_tabular_warning(
+                    producer=producer,
+                    norm=row["norm"],
+                    snippet=row["snippet"],
+                    file_name=row["file"],
+                    line=row["line"],
+                    rule_name=row["rule_name"],
+                    initial_weight=weight,
+                )
+            except ValueError:
+                counts["failed"] += 1
+                continue
+            alert_id = str(warning["alert_id"])
+            if alert_id in existing and request.mode == "merge":
+                counts["skipped_dup"] += 1
+                continue
+            target = workspace.alerts / "tabular" / _alert_digest_name(alert_id)
+            write_json_atomic(target, warning)
+            existing[alert_id] = (target, warning)
+            counts["imported"] += 1
+
+        state = workspace.read_state() or {}
+        baseline = state.get("baseline")
+        if not isinstance(baseline, dict) or baseline.get("kind") == "tabular-import":
+            state["baseline"] = {
+                "kind": "tabular-import",
+                "producer": producer,
+                "source_dir": str(config.source_dir),
+            }
+        if "semantic_facts_sha256" not in state and workspace.semantic_facts.is_file():
+            state["semantic_facts_sha256"] = sha256_file(workspace.semantic_facts)
+        state["last_operation"] = {
+            "operation_id": operation_id,
+            "kind": "import-xlsx",
+            "completed_at": _now(),
+            "counts": counts,
+            "producer": producer,
+            "xlsx_path": str(xlsx_path),
+        }
+        workspace.write_state(state)
+
+    emit("complete", f"imported {counts['imported']} alert(s)")
+    return ImportXlsxResult(
+        operation_id=operation_id,
+        producer=producer,
+        mode=request.mode,
+        path_filter=bool(request.path_filter),
+        xlsx_path=str(xlsx_path),
+        counts=counts,
+        alerts_dir=str(workspace.alerts),
+        log_path=str(log_path),
+        ok=counts["failed"] == 0,
+    )
 
 
 def _classification_count(document: dict[str, Any]) -> int:
@@ -447,7 +640,17 @@ def triage(
         workspace.ensure_semantic_repository(
             REPOSITORY_ROOT / "contracts" / "examples" / "semantic-fact-v2.json"
         )
-        checkers = _assert_current_baseline(config, workspace, actual_runner)
+        index = _warning_index(workspace.alerts)
+        selected_docs = []
+        for alert_id in dict.fromkeys(request.alert_ids):
+            if alert_id not in index:
+                raise ValueError(f"unknown alert_id(s): {alert_id}")
+            selected_docs.append(index[alert_id][1])
+        if request.mode == "expand-semantics" and any(
+            doc.get("type") == "tabular" for doc in selected_docs
+        ):
+            raise ValueError("expand-semantics is not supported for tabular spreadsheet alerts")
+        checkers = _assert_triage_baseline(config, workspace, actual_runner, selected_docs)
         stage = workspace.staging(operation_id)
         try:
             exit_code, classified, skipped, semantic_stage, facts_added = _run_fph_locked(
@@ -570,6 +773,7 @@ def _prepare_prediction(
     runner: ToolRunner,
     stage: Path,
     model: Path | None,
+    model_id: str | None = None,
 ) -> tuple[Path, Path, int]:
     alert_stage = stage / "alerts"
     workspace.copy_alerts(alert_stage)
@@ -585,6 +789,9 @@ def _prepare_prediction(
         command.append("--random-weights")
     else:
         command.extend(["--model", str(model)])
+        label = (model_id or _checkpoint_model_id(workspace, model)).strip()
+        if label:
+            command.extend(["--model-id", label])
     runner.run_active_cli(config, command)
     ranking = stage / "ranking.jsonl"
     runner.run_active_cli(
@@ -602,6 +809,14 @@ def _prepare_prediction(
     index = _warning_index(alert_stage)
     weighted = sum(not document[1]["suppressed"] for document in index.values())
     return alert_stage, ranking, weighted
+
+
+def _checkpoint_model_id(workspace: ArtifactWorkspace, checkpoint: Path) -> str:
+    resolved = checkpoint.resolve()
+    try:
+        return str(resolved.relative_to(workspace.root.resolve()))
+    except ValueError:
+        return str(resolved)
 
 
 def _env_int(name: str, default: int, *aliases: str) -> int:
@@ -654,8 +869,33 @@ def _env_choice(name: str, default: str, allowed: set[str], *aliases: str) -> st
     return default
 
 
-def _feedback_is_classified(row: dict[str, Any]) -> bool:
+def _feedback_alert_path(row: dict[str, Any], alerts_dir: Path | None) -> Path:
+    """Resolve a ranking row to a readable alert JSON path.
+
+    Ranking rows may still point at a staging directory that was moved into
+    ``workspace.alerts`` by ``replace_directory``; fall back to alert_id lookup.
+    """
     path = Path(str(row.get("path") or ""))
+    if path.is_file():
+        return path
+    if alerts_dir is None:
+        return path
+    alert_id = str(row.get("alert_id") or "")
+    warning_type = str(row.get("type") or "")
+    digest = alert_id.split(":", 1)[-1] if alert_id else ""
+    if digest and warning_type:
+        candidate = alerts_dir / warning_type / f"{digest}.json"
+        if candidate.is_file():
+            return candidate
+    if digest:
+        matches = sorted(alerts_dir.rglob(f"{digest}.json"))
+        if len(matches) == 1:
+            return matches[0]
+    return path
+
+
+def _feedback_is_classified(row: dict[str, Any], alerts_dir: Path | None = None) -> bool:
+    path = _feedback_alert_path(row, alerts_dir)
     if not path.is_file():
         return False
     try:
@@ -698,20 +938,27 @@ def _sample_feedback_rows(
     return selected
 
 
-def _select_feedback_ids(ranking: Path, excluded: set[str]) -> list[str]:
+def _select_feedback_ids(
+    ranking: Path,
+    excluded: set[str],
+    *,
+    alerts_dir: Path | None = None,
+) -> list[str]:
+    # Default policy: keep all hard labels for training, and only send randomly
+    # sampled *unclassified* alerts to FPhandler (no score-based top/bottom).
     top_k = _env_int(
         "ACTIVE_LEARNING_FEEDBACK_TOP_K",
-        10,
+        0,
         "active_learning_feedback_top_k",
     )
     bottom_k = _env_int(
         "ACTIVE_LEARNING_FEEDBACK_BOTTOM_K",
-        10,
+        0,
         "active_learning_feedback_bottom_k",
     )
     random_k = _env_int(
         "ACTIVE_LEARNING_FEEDBACK_RANDOM_K",
-        0,
+        10,
         "active_learning_feedback_random_k",
     )
     random_seed = _env_int(
@@ -721,12 +968,12 @@ def _select_feedback_ids(ranking: Path, excluded: set[str]) -> list[str]:
     )
     skip_classified = _env_flag(
         "ACTIVE_LEARNING_FEEDBACK_SKIP_CLASSIFIED",
-        False,
+        True,
         "active_learning_feedback_skip_classified",
     )
     random_strategy = _env_choice(
         "ACTIVE_LEARNING_FEEDBACK_RANDOM_STRATEGY",
-        "plain",
+        "type",
         {"plain", "type"},
         "active_learning_feedback_random_strategy",
     )
@@ -742,11 +989,14 @@ def _select_feedback_ids(ranking: Path, excluded: set[str]) -> list[str]:
             alert_id = str(row["alert_id"])
             if alert_id in excluded:
                 continue
-            classified = _feedback_is_classified(row)
+            classified = _feedback_is_classified(row, alerts_dir)
             if skip_classified and classified:
                 continue
             row = dict(row)
             row["is_classified"] = classified
+            resolved = _feedback_alert_path(row, alerts_dir)
+            if resolved.is_file():
+                row["path"] = str(resolved)
             rows.append(row)
     rows.sort(key=lambda item: (-float(item["weight"]), str(item["type"]), item["alert_id"]))
 
@@ -843,11 +1093,19 @@ def _active_learning_train_cli_args() -> list[str]:
                 "active_learning_uncertain_weight",
             )
         ),
+        "--hard-positive-weight",
+        str(
+            _env_float(
+                "ACTIVE_LEARNING_HARD_POSITIVE_WEIGHT",
+                0.0,
+                "active_learning_hard_positive_weight",
+            )
+        ),
         "--unlabeled-weight",
         str(
             _env_float(
                 "ACTIVE_LEARNING_UNLABELED_WEIGHT",
-                0.1,
+                0.0,
                 "active_learning_unlabeled_weight",
             )
         ),
@@ -942,7 +1200,9 @@ def run_active_learning(
                     model_dir = workspace.models / operation_id
                     model_dir.mkdir(parents=True, exist_ok=True)
                     for round_number in range(1, request.rounds + 1):
-                        ids = _select_feedback_ids(ranking, selected_ids)
+                        ids = _select_feedback_ids(
+                            ranking, selected_ids, alerts_dir=workspace.alerts
+                        )
                         if not ids:
                             stopped_reason = "no unselected active warnings remain"
                             break
@@ -999,20 +1259,20 @@ def run_active_learning(
                             break
                         prediction_stage = round_stage / "prediction"
                         prediction_stage.mkdir()
+                        checkpoint = model_dir / f"{round_id}.pt"
                         prepared_alerts, ranking, weighted = _prepare_prediction(
                             config,
                             workspace,
                             actual_runner,
                             prediction_stage,
                             staged_checkpoint,
+                            model_id=_checkpoint_model_id(workspace, checkpoint),
                         )
-                        checkpoint = model_dir / f"{round_id}.pt"
                         os.replace(staged_checkpoint, checkpoint)
                         manifest = {
                             "run_id": operation_id,
                             "round": round_number,
                             "checkpoint": str(checkpoint.relative_to(workspace.root)),
-                            "sha256": sha256_file(checkpoint),
                             "created_at": _now(),
                             "feedback_alert_ids": ids,
                         }

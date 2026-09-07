@@ -153,8 +153,8 @@ class ToolRunner:
             "PROJECT_ROOT": str(config.source_dir),
             "BITCODE_PATH": str(config.bitcode_path),
             "BC_STEM": config.bitcode_path.stem,
-            "DEFECT_TYPES": ["leak", "dfree", "uaf", "uninit", "bof"],
-            "ALERT_TYPES": ["leak", "dfree", "uaf", "uninit", "bof"],
+            "DEFECT_TYPES": ["leak", "dfree", "uaf", "uninit", "bof", "tabular"],
+            "ALERT_TYPES": ["leak", "dfree", "uaf", "uninit", "bof", "tabular"],
             "ALERT_DIR": str(config.artifact_dir / "alerts"),
             "RUN_LOG_STEM": config.bitcode_path.stem,
             "RUN_SESSION_TIME_STR": None,
@@ -243,7 +243,6 @@ class ToolRunner:
         relative = checkpoint.relative_to(path.parent.parent)
         value = {
             "checkpoint": str(relative),
-            "sha256": sha256_file(checkpoint),
             "run_id": run_id,
             "round": round_number,
         }

@@ -7,6 +7,11 @@ def build_parser():
     parser = argparse.ArgumentParser(description="Local HTML UI for one workflow.ini")
     parser.add_argument("--config", required=True, help="workflow.ini to bind at startup")
     parser.add_argument(
+        "--env-file",
+        default=None,
+        help="runtime.env bound at startup (shown in the project panel)",
+    )
+    parser.add_argument(
         "--host",
         default="127.0.0.1",
         help="bind address (default: 127.0.0.1; use 0.0.0.0 inside Docker)",
@@ -23,7 +28,7 @@ def main():
     try:
         from .server import serve
 
-        serve(args.config, args.port, host=args.host)
+        serve(args.config, args.port, host=args.host, env_file=args.env_file)
     except ValueError as error:
         print(f"error: {error}", file=sys.stderr)
         return 2

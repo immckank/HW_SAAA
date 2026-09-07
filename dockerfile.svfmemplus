@@ -1,3 +1,5 @@
+# openEuler / ML 实验镜像（含 torch）。
+# NeverFree 的 nf-image:llvm21 已独立：见 MemoryLeak/NeverFree/docker/Dockerfile
 FROM ubuntu:24.04
 
 ENV DEBIAN_FRONTEND=noninteractive
@@ -25,6 +27,7 @@ RUN python3 -m venv /opt/venv && \
     /opt/venv/bin/pip install --upgrade pip setuptools wheel && \
     /opt/venv/bin/pip install openai google-genai && \
     /opt/venv/bin/pip install tree_sitter tree_sitter_languages tree_sitter_c pytest && \
+    /opt/venv/bin/pip install openpyxl && \
     /opt/venv/bin/pip install numpy pandas scikit-learn tqdm matplotlib seaborn && \
     /opt/venv/bin/pip install torch --index-url https://download.pytorch.org/whl/cu124 && \
     /opt/venv/bin/pip install torch-geometric && \

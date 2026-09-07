@@ -9,12 +9,15 @@ from pathlib import Path
 from .services import (
     ActiveLearningRequest,
     AnalyzeRequest,
+    ImportXlsxRequest,
     ProgressEvent,
     TriageRequest,
     analyze,
+    import_xlsx,
     run_active_learning,
     triage,
 )
+from .xlsx_import import DEFAULT_PRODUCER
 
 
 def _progress(event: ProgressEvent) -> None:
@@ -61,6 +64,24 @@ def build_parser() -> argparse.ArgumentParser:
     active.add_argument("--rounds", required=True, type=int)
     active.add_argument("--feedback", required=True, choices=("none", "fphandler"))
     active.add_argument("--initial-model", required=True, help="random, latest, or checkpoint path")
+
+    import_parser = commands.add_parser(
+        "import-xlsx", help="import tabular SAST spreadsheet alerts"
+    )
+    import_parser.add_argument("--xlsx", required=True, help="path to xlsx alert list")
+    import_parser.add_argument("--producer", default=DEFAULT_PRODUCER)
+    import_parser.add_argument("--initial-weight", type=float, default=0.5)
+    import_parser.add_argument(
+        "--mode",
+        choices=("merge", "replace-producer"),
+        default="merge",
+        help="merge keeps existing IDs; replace-producer clears this producer first",
+    )
+    import_parser.add_argument(
+        "--no-path-filter",
+        action="store_true",
+        help="import all rows without matching source_dir",
+    )
     return parser
 
 
@@ -82,6 +103,18 @@ def main() -> int:
                     mode=args.mode,
                     round_id=args.round_id,
                     classification_source=args.classification_source,
+                ),
+                progress=_progress,
+            )
+        elif args.command == "import-xlsx":
+            result = import_xlsx(
+                ImportXlsxRequest(
+                    config_path=args.config,
+                    xlsx_path=args.xlsx,
+                    producer=args.producer,
+                    initial_weight=args.initial_weight,
+                    path_filter=not args.no_path_filter,
+                    mode=args.mode,
                 ),
                 progress=_progress,
             )

@@ -15,12 +15,19 @@ from .project import BoundProject, ConfigurationChangedError
 
 
 MAX_REQUEST_BYTES = 1024 * 1024
+MAX_UPLOAD_BYTES = 32 * 1024 * 1024
 STATIC_ROOT = Path(__file__).with_name("static")
 
 
 class LocalUIApp:
-    def __init__(self, config_path: str | Path, *, services=None):
-        self.project = BoundProject(config_path)
+    def __init__(
+        self,
+        config_path: str | Path,
+        *,
+        env_file: str | Path | None = None,
+        services=None,
+    ):
+        self.project = BoundProject(config_path, env_file=env_file)
         self.alerts = AlertTable(self.project)
         self.operations = OperationManager(self.project, services=services)
 
@@ -107,9 +114,10 @@ class LocalUIRequestHandler(BaseHTTPRequestHandler):
                 query = parse_qs(parsed.query)
                 warning_type = query.get("type", ["all"])[0]
                 order = query.get("order", ["desc"])[0]
+                path_scope = query.get("path_scope", ["project"])[0]
                 self._json(
                     HTTPStatus.OK,
-                    self.server.app.alerts.load(warning_type, order),
+                    self.server.app.alerts.load(warning_type, order, path_scope),
                 )
                 return
             if parsed.path == "/api/operations/current":
@@ -141,8 +149,81 @@ class LocalUIRequestHandler(BaseHTTPRequestHandler):
         except (UnicodeDecodeError, json.JSONDecodeError) as error:
             raise ValueError(f"invalid JSON request: {error}") from error
 
+    def _save_upload(self) -> dict[str, str]:
+        content_type = self.headers.get("Content-Type", "")
+        if "multipart/form-data" not in content_type.lower():
+            raise ValueError("Content-Type must be multipart/form-data")
+        raw_length = self.headers.get("Content-Length")
+        try:
+            length = int(raw_length or "0")
+        except ValueError as error:
+            raise ValueError("invalid Content-Length") from error
+        if length < 1:
+            raise ValueError("request body must not be empty")
+        if length > MAX_UPLOAD_BYTES:
+            raise ValueError("upload is too large")
+        body = self.rfile.read(length)
+        boundary_token = ""
+        for part in content_type.split(";"):
+            part = part.strip()
+            if part.lower().startswith("boundary="):
+                boundary_token = part.split("=", 1)[1].strip().strip('"')
+                break
+        if not boundary_token:
+            raise ValueError("multipart boundary is missing")
+        boundary = b"--" + boundary_token.encode("utf-8")
+        filename = "upload.xlsx"
+        file_bytes: bytes | None = None
+        for chunk in body.split(boundary):
+            if not chunk or chunk in (b"--\r\n", b"--"):
+                continue
+            if chunk.startswith(b"\r\n"):
+                chunk = chunk[2:]
+            if chunk.endswith(b"\r\n"):
+                chunk = chunk[:-2]
+            if chunk.endswith(b"--"):
+                chunk = chunk[:-2]
+            header_blob, sep, payload = chunk.partition(b"\r\n\r\n")
+            if not sep:
+                continue
+            headers = header_blob.decode("utf-8", errors="replace")
+            if "name=\"xlsx\"" not in headers and "name=xlsx" not in headers:
+                continue
+            for line in headers.split("\r\n"):
+                if "filename=" in line:
+                    marker = "filename="
+                    raw_name = line[line.lower().index(marker) + len(marker) :].strip()
+                    filename = raw_name.strip('"') or filename
+            file_bytes = payload
+            break
+        if file_bytes is None:
+            raise ValueError("multipart field xlsx is required")
+        if not filename.lower().endswith(".xlsx"):
+            raise ValueError("uploaded file must be .xlsx")
+        uploads = (
+            self.server.app.project.config.artifact_dir
+            / ".orchestrator"
+            / "uploads"
+        )
+        uploads.mkdir(parents=True, exist_ok=True)
+        safe_name = Path(filename).name.replace(" ", "_")
+        target = uploads / safe_name
+        target.write_bytes(file_bytes)
+        return {"xlsx_path": str(target.resolve())}
+
     def do_POST(self) -> None:  # noqa: N802 - BaseHTTPRequestHandler API
         parsed = urlsplit(self.path)
+        if parsed.path == "/api/uploads/xlsx":
+            try:
+                self.server.app.project.assert_unchanged()
+                self._json(HTTPStatus.OK, self._save_upload())
+            except ConfigurationChangedError as error:
+                self._error(HTTPStatus.CONFLICT, str(error))
+            except ValueError as error:
+                self._error(HTTPStatus.BAD_REQUEST, str(error))
+            except Exception as error:
+                self._error(HTTPStatus.INTERNAL_SERVER_ERROR, str(error))
+            return
         prefix = "/api/operations/"
         if not parsed.path.startswith(prefix):
             self._error(HTTPStatus.NOT_FOUND, "resource not found")
@@ -167,6 +248,7 @@ def make_server(
     port: int = 8765,
     *,
     host: str = "127.0.0.1",
+    env_file: str | Path | None = None,
     services=None,
 ) -> LocalUIServer:
     if isinstance(port, bool) or not isinstance(port, int) or not 1 <= port <= 65535:
@@ -174,11 +256,20 @@ def make_server(
     if not isinstance(host, str) or not host.strip():
         raise ValueError("host must be a non-empty string")
     bind_host = host.strip()
-    return LocalUIServer((bind_host, port), LocalUIApp(config_path, services=services))
+    return LocalUIServer(
+        (bind_host, port),
+        LocalUIApp(config_path, env_file=env_file, services=services),
+    )
 
 
-def serve(config_path: str | Path, port: int = 8765, *, host: str = "127.0.0.1") -> None:
-    server = make_server(config_path, port, host=host)
+def serve(
+    config_path: str | Path,
+    port: int = 8765,
+    *,
+    host: str = "127.0.0.1",
+    env_file: str | Path | None = None,
+) -> None:
+    server = make_server(config_path, port, host=host, env_file=env_file)
     actual_host, actual_port = server.server_address[0], int(server.server_address[1])
     display_host = "127.0.0.1" if actual_host in ("0.0.0.0", "::") else actual_host
     print(f"Local workflow UI: http://{display_host}:{actual_port}")

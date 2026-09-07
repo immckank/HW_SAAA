@@ -6,11 +6,12 @@ from pathlib import Path
 from typing import Any, Mapping
 
 from orchestrator.services import WARNING_TYPES, require_warning
+from orchestrator.xlsx_import import path_filter_document
 
 from .project import BoundProject
 
 
-TYPE_ORDER = ("leak", "dfree", "uaf", "uninit", "bof")
+TYPE_ORDER = ("leak", "dfree", "uaf", "uninit", "bof", "tabular")
 
 
 def _compact_text(value: Any, limit: int = 120) -> str:
@@ -50,6 +51,25 @@ def _location(value: Any) -> str:
 def summarize_content(warning_type: str, content: Any) -> str:
     if not isinstance(content, Mapping):
         return _json_preview(content)
+    if warning_type == "tabular":
+        location = content.get("location")
+        if isinstance(location, Mapping):
+            file_name = str(location.get("file") or "?")
+            line = location.get("line")
+            place = f"{file_name}:{line}" if line is not None else file_name
+        else:
+            place = "?"
+        rule = _compact_text(content.get("rule_name"), 40)
+        snippet = _compact_text(content.get("snippet"), 80)
+        norm = _compact_text(content.get("norm"), 40)
+        parts = [place]
+        if rule:
+            parts.append(rule)
+        if norm:
+            parts.append(norm)
+        if snippet:
+            parts.append(snippet)
+        return " · ".join(parts)
     if warning_type in {"dfree", "uaf", "uninit"}:
         path = content.get("path")
         if isinstance(path, list) and path:
@@ -79,7 +99,9 @@ def summarize_graphs(graph_ids: Any) -> str:
         return "未关联"
     if graph_ids == []:
         return "已处理，无图"
-    return f"{len(graph_ids)} 个图"
+    if not isinstance(graph_ids, list):
+        return _json_preview(graph_ids)
+    return ", ".join(str(item) for item in graph_ids)
 
 
 def summarize_classifications(history: Any) -> str:
@@ -120,12 +142,19 @@ class AlertTable:
     def __init__(self, project: BoundProject):
         self.project = project
 
-    def load(self, warning_type: str = "all", order: str = "desc") -> dict[str, Any]:
+    def load(
+        self,
+        warning_type: str = "all",
+        order: str = "desc",
+        path_scope: str = "project",
+    ) -> dict[str, Any]:
         self.project.assert_unchanged()
         if warning_type != "all" and warning_type not in WARNING_TYPES:
             raise ValueError(f"unsupported warning type filter: {warning_type}")
         if order not in {"asc", "desc"}:
             raise ValueError(f"unsupported score order: {order}")
+        if path_scope not in {"project", "all"}:
+            raise ValueError("path_scope must be project or all")
 
         alerts_root = self.project.config.artifact_dir / "alerts"
         documents: list[dict[str, Any]] = []
@@ -149,6 +178,12 @@ class AlertTable:
                 documents.append(document)
 
         total = len(documents)
+        if path_scope == "project":
+            source_dir = self.project.config.source_dir
+            documents = [
+                item for item in documents if path_filter_document(item, source_dir)
+            ]
+        path_filtered = len(documents)
         if warning_type != "all":
             documents = [item for item in documents if item["type"] == warning_type]
         rows = [warning_row(document) for document in documents]
@@ -157,7 +192,9 @@ class AlertTable:
         return {
             "alerts": rows,
             "total": total,
+            "path_filtered": path_filtered,
             "filtered": len(rows),
             "type": warning_type,
             "order": order,
+            "path_scope": path_scope,
         }

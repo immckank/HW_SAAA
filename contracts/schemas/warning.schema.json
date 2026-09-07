@@ -18,7 +18,7 @@
   "properties": {
     "alert_id": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
     "producer": {"type": "string", "minLength": 1},
-    "type": {"enum": ["leak", "dfree", "uaf", "uninit", "bof"]},
+    "type": {"enum": ["leak", "dfree", "uaf", "uninit", "bof", "tabular"]},
     "content": {"type": "object", "minProperties": 1},
     "graph_ids": {
       "oneOf": [
@@ -61,9 +61,24 @@
     {
       "if": {"properties": {"type": {"const": "bof"}}},
       "then": {"properties": {"content": {"$ref": "#/$defs/bofContent"}}}
+    },
+    {
+      "if": {"properties": {"type": {"const": "tabular"}}},
+      "then": {"properties": {"content": {"$ref": "#/$defs/tabularContent"}}}
     }
   ],
   "$defs": {
+    "tabularContent": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["location", "snippet", "norm", "rule_name"],
+      "properties": {
+        "location": {"$ref": "#/$defs/location"},
+        "snippet": {"type": "string", "minLength": 1},
+        "norm": {"type": "string", "minLength": 1},
+        "rule_name": {"type": "string", "minLength": 1}
+      }
+    },
     "location": {
       "type": "object",
       "additionalProperties": false,

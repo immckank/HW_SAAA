@@ -226,7 +226,11 @@ start_local() {
     check_svf_binaries
   fi
   cd "$REPO_ROOT"
-  exec python3 -m local_ui --config "$CONFIG_PATH" --host "$bind_host" --port "$PORT"
+  exec python3 -m local_ui \
+    --config "$CONFIG_PATH" \
+    --env-file "$ENV_FILE" \
+    --host "$bind_host" \
+    --port "$PORT"
 }
 
 docker_image_exists() {
@@ -344,6 +348,7 @@ print("ok: saber, bof")
     "$IMAGE" \
     python3 -m local_ui \
       --config "$CONFIG_PATH" \
+      --env-file "$ENV_FILE" \
       --host "$bind_host" \
       --port "$PORT"
 }
