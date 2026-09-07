@@ -38,7 +38,7 @@ infer-linux-x86_64-v1.2.0.tar.xz
 linux_dataset/
 linux数据集.md
 
-# 根目录其他文档（本仓库仅保留 SVFmemplus分析管线.md）
+# 根目录其他文档（本仓库仅保留 SAAA分析管线.md）
 README.md
 README.bc.md
 三对象静态分析检测结果统计.md
