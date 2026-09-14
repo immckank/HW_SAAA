@@ -40,12 +40,27 @@ def same_or_suffix_path(left: str, right: str) -> bool:
     )
 
 
+def _source_suffix_prefixes(source: str) -> list[str]:
+    """Return trailing path prefixes of ``source`` (longest first), e.g. a/b/c -> a/b/c, b/c, c."""
+    parts = [part for part in normalize_path(source).split("/") if part]
+    return ["/".join(parts[index:]) for index in range(len(parts))]
+
+
 def path_matches_source(file_path: str, source_dir: Path) -> bool:
-    """True when the alert file belongs to ``source_dir`` by path heuristics."""
+    """True when the alert file belongs to ``source_dir`` by path heuristics.
+
+    Relative spreadsheet paths must not be treated as matches merely because
+    ``source_dir / relative`` always resolves under ``source_dir``; that used to
+    import every row. Prefer real files under ``source_dir``, then path-prefix
+    / leaf heuristics against ``workflow.ini`` ``source_dir``.
+    """
     file_name = normalize_path(file_path)
     if not file_name:
         return False
-    source = normalize_path(str(source_dir.resolve()))
+    try:
+        source = normalize_path(str(source_dir.resolve()))
+    except OSError:
+        source = normalize_path(str(source_dir))
     source_leaf = Path(source).name
 
     try:
@@ -55,15 +70,26 @@ def path_matches_source(file_path: str, source_dir: Path) -> bool:
             if resolved == source or resolved.startswith(source + "/"):
                 return True
         else:
+            # Only trust join when the file actually exists under source_dir.
             joined = (source_dir / candidate).resolve()
             resolved = normalize_path(str(joined))
-            if resolved == source or resolved.startswith(source + "/"):
+            under_source = resolved == source or resolved.startswith(source + "/")
+            if under_source and joined.exists():
                 return True
     except OSError:
         pass
 
     if same_or_suffix_path(file_name, source) or same_or_suffix_path(file_name, source_leaf):
         return True
+
+    # e.g. source_dir=.../drivers/ub and file=drivers/ub/mem/foo.c
+    padded = f"/{file_name}/"
+    for prefix in _source_suffix_prefixes(source):
+        if file_name == prefix or file_name.startswith(prefix + "/"):
+            return True
+        if f"/{prefix}/" in padded:
+            return True
+
     parts = [part for part in file_name.split("/") if part]
     if source_leaf and source_leaf in parts:
         return True
@@ -145,7 +171,9 @@ def read_xlsx_rows(path: Path) -> list[dict[str, Any]]:
         ) from error
     if not path.is_file():
         raise ValueError(f"xlsx file does not exist: {path}")
-    workbook = load_workbook(path, read_only=True, data_only=True)
+    # read_only trusts sheet dimension; some exporters set it to one row and
+    # drop the rest. Use normal mode so max_row reflects actual cells.
+    workbook = load_workbook(path, read_only=False, data_only=True)
     try:
         sheet = workbook.active
         rows_iter = sheet.iter_rows(values_only=True)
